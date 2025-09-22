@@ -10,9 +10,9 @@ sh: line 1: pip: command not found
 Error: Command "pip install -r requirements.txt" exited with 127
 ```
 
-**Solution**: 
+**Solution**:
 1. In Vercel dashboard, set **Root Directory** to `backend` (not `./backend`)
-2. Set **Framework Preset** to "Other" (not Next.js)  
+2. Set **Framework Preset** to "Other" (not Next.js)
 3. Leave **Build Command** and **Install Command** EMPTY
 4. Redeploy
 
@@ -82,7 +82,7 @@ Make sure these are set correctly:
 - **Framework Preset**: Other
 - **Root Directory**: `backend`
 - **Build Command**: (empty)
-- **Output Directory**: (empty)  
+- **Output Directory**: (empty)
 - **Install Command**: (empty)
 - **Node.js Version**: (doesn't matter for Python)
 
@@ -107,7 +107,7 @@ npx vercel --prod
 
 # Follow prompts:
 # - Set up new project: Y
-# - Link to existing project: N  
+# - Link to existing project: N
 # - Project name: your-backend-name
 # - Directory: ./
 ```
@@ -278,9 +278,9 @@ After successful deployment, you'll have:
    sh: line 1: pip: command not found
    Error: Command "pip install -r requirements.txt" exited with 127
    ```
-   
+
    **Root Cause**: Vercel detected `package.json` in root and used Node.js instead of Python
-   
+
    **Solution**:
    - Ensure **Root Directory** is set to `backend` (not `./backend`)
    - Set **Framework Preset** to "Other" (not Next.js)
@@ -291,9 +291,9 @@ After successful deployment, you'll have:
    ```
    Warning: Detected "engines": { "node": ">=18.0.0" } in your `package.json`
    ```
-   
+
    **Root Cause**: Vercel is reading package.json from wrong directory
-   
+
    **Solution**: Follow the corrected backend deployment steps above
 
 ### Common Issues

@@ -9,7 +9,7 @@ Your project has been successfully pushed to GitHub:
 
 If you get "pip: command not found" error:
 - Set **Root Directory** to `backend` (not `./backend`)
-- Set **Framework Preset** to "Other" 
+- Set **Framework Preset** to "Other"
 - Leave Build/Install commands EMPTY
 
 ## 🌐 Vercel Deployment Steps (Quick Guide)
