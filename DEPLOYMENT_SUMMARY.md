@@ -5,6 +5,13 @@
 Your project has been successfully pushed to GitHub:
 **https://github.com/ethical0101/Project-X-Full_Stack**
 
+## 🚨 Backend Deployment Fix
+
+If you get "pip: command not found" error:
+- Set **Root Directory** to `backend` (not `./backend`)
+- Set **Framework Preset** to "Other" 
+- Leave Build/Install commands EMPTY
+
 ## 🌐 Vercel Deployment Steps (Quick Guide)
 
 ### 1. Frontend Deployment
@@ -18,11 +25,14 @@ Your project has been successfully pushed to GitHub:
    ```
 6. Click **Deploy**
 
-### 2. Backend Deployment
+### 2. Backend Deployment (CORRECTED)
 1. Create another **"New Project"** in Vercel
 2. Import the **same repository**: `ethical0101/Project-X-Full_Stack`
-3. **Root Directory**: `./backend`
-4. Add environment variables:
+3. **Root Directory**: `backend` (NOT `./backend`)
+4. **Framework Preset**: Other (NOT Next.js)
+5. **Build Command**: Leave EMPTY
+6. **Install Command**: Leave EMPTY
+7. Add environment variables:
    ```
    PYTHONPATH = .
    FLASK_ENV = production

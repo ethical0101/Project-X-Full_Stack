@@ -2,7 +2,21 @@
 
 This guide covers deploying both the frontend (Next.js) and backend (Python Flask) to Vercel.
 
-## 📋 Prerequisites
+## � QUICK FIX for "pip: command not found" Error
+
+If you're getting this error during backend deployment:
+```
+sh: line 1: pip: command not found
+Error: Command "pip install -r requirements.txt" exited with 127
+```
+
+**Solution**: 
+1. In Vercel dashboard, set **Root Directory** to `backend` (not `./backend`)
+2. Set **Framework Preset** to "Other" (not Next.js)  
+3. Leave **Build Command** and **Install Command** EMPTY
+4. Redeploy
+
+## �📋 Prerequisites
 
 1. **Vercel Account**: Sign up at [vercel.com](https://vercel.com)
 2. **GitHub Repository**: Your code should be pushed to GitHub
@@ -44,22 +58,59 @@ NODE_ENV=production
 
 Click **"Deploy"** and wait for the build to complete.
 
-## 🐍 Backend Deployment (Python Flask)
+## 🐍 Backend Deployment (Python Flask) - FIXED METHOD
 
-### Step 1: Create New Vercel Project
+### ⚠️ Important: Backend Root Directory Issue
+
+When deploying the backend, Vercel detects the `package.json` in the root and tries to run Node.js commands. Here's the solution:
+
+### Method 1: Correct Vercel Settings (Recommended)
 
 1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
 2. Click **"New Project"**
-3. Import the **same GitHub repository**
-4. Set **Root Directory** to `./backend`
+3. Import your GitHub repository: `ethical0101/Project-X-Full_Stack`
+4. **CRITICAL**: Set **Root Directory** to `backend` (not `./backend`)
+5. **Framework Preset**: Other (not Next.js)
+6. **Build Command**: Leave EMPTY or use `echo "No build needed"`
+7. **Output Directory**: Leave EMPTY
+8. **Install Command**: Leave EMPTY (Vercel will auto-detect requirements.txt)
 
-### Step 2: Configure Build Settings
+### Step 2: Verify Build Settings
+
+Make sure these are set correctly:
 
 - **Framework Preset**: Other
-- **Root Directory**: `./backend`
-- **Build Command**: `pip install -r requirements.txt`
-- **Output Directory**: `./` (leave empty)
-- **Install Command**: `pip install -r requirements.txt`
+- **Root Directory**: `backend`
+- **Build Command**: (empty)
+- **Output Directory**: (empty)  
+- **Install Command**: (empty)
+- **Node.js Version**: (doesn't matter for Python)
+
+### Step 3: Deploy Backend
+
+Click **"Deploy"** and Vercel should now:
+1. Detect `requirements.txt` in the backend folder
+2. Use Python runtime automatically
+3. Install dependencies with `pip install -r requirements.txt`
+4. Deploy your Flask app
+
+### Method 2: Alternative CLI Approach
+
+If the GUI method still fails, use Vercel CLI:
+
+```bash
+# Navigate to backend directory
+cd backend
+
+# Deploy directly from backend folder
+npx vercel --prod
+
+# Follow prompts:
+# - Set up new project: Y
+# - Link to existing project: N  
+# - Project name: your-backend-name
+# - Directory: ./
+```
 
 ### Step 3: Backend Environment Variables
 
@@ -220,12 +271,38 @@ After successful deployment, you'll have:
 
 ## 🔍 Troubleshooting
 
+### Backend-Specific Issues
+
+1. **"pip: command not found" Error** ⚠️
+   ```
+   sh: line 1: pip: command not found
+   Error: Command "pip install -r requirements.txt" exited with 127
+   ```
+   
+   **Root Cause**: Vercel detected `package.json` in root and used Node.js instead of Python
+   
+   **Solution**:
+   - Ensure **Root Directory** is set to `backend` (not `./backend`)
+   - Set **Framework Preset** to "Other" (not Next.js)
+   - Leave **Build Command** and **Install Command** EMPTY
+   - Vercel will auto-detect `requirements.txt` and use Python runtime
+
+2. **Node.js Version Warning in Python Project**
+   ```
+   Warning: Detected "engines": { "node": ">=18.0.0" } in your `package.json`
+   ```
+   
+   **Root Cause**: Vercel is reading package.json from wrong directory
+   
+   **Solution**: Follow the corrected backend deployment steps above
+
 ### Common Issues
 
 1. **Build Failures**
    - Check build logs in Vercel dashboard
    - Verify all dependencies are in package.json/requirements.txt
    - Ensure Python version compatibility (use Python 3.9+)
+   - For backend: Make sure Root Directory is set to `backend`
 
 2. **CORS Errors**
    - Verify CORS_ORIGINS environment variable
