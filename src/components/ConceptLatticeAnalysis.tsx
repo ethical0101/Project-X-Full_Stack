@@ -112,7 +112,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
     const dataStr = JSON.stringify(latticeData, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
-    
+
     const link = document.createElement('a');
     link.href = url;
     link.download = 'concept_lattice.json';
@@ -125,72 +125,72 @@ const ConceptLatticeAnalysis: React.FC = () => {
   // Enhanced Hesse diagram layout
   const calculateHesseLayout = (nodes: ConceptNode[], edges: ConceptEdge[]) => {
     const positions: { [key: number]: { x: number; y: number; level: number } } = {};
-    
+
     // Build parent-child relationships
     const children: { [key: number]: number[] } = {};
     const parents: { [key: number]: number[] } = {};
-    
+
     nodes.forEach(node => {
       children[node.id] = [];
       parents[node.id] = [];
     });
-    
+
     edges.forEach(edge => {
       children[edge.source] = children[edge.source] || [];
       parents[edge.target] = parents[edge.target] || [];
       children[edge.source].push(edge.target);
       parents[edge.target].push(edge.source);
     });
-    
+
     // Find levels based on longest path from top
     const levels: { [key: number]: number } = {};
     const visited = new Set<number>();
-    
+
     // Find top concept (or most general concept)
     const topCandidates = nodes.filter(n => n.is_top || parents[n.id].length === 0);
     const topNode = topCandidates[0] || nodes[0];
-    
+
     // DFS to assign levels
     const assignLevel = (nodeId: number, level: number) => {
       if (visited.has(nodeId)) return;
       visited.add(nodeId);
       levels[nodeId] = Math.max(levels[nodeId] || 0, level);
-      
+
       children[nodeId].forEach(childId => {
         assignLevel(childId, level + 1);
       });
     };
-    
+
     assignLevel(topNode.id, 0);
-    
+
     // Group nodes by level
     const nodesByLevel: { [level: number]: number[] } = {};
     Object.entries(levels).forEach(([nodeId, level]) => {
       if (!nodesByLevel[level]) nodesByLevel[level] = [];
       nodesByLevel[level].push(parseInt(nodeId));
     });
-    
+
     // Position nodes
     const svgWidth = 800;
     const svgHeight = 600;
     const margin = 80;
     const maxLevel = Math.max(...Object.values(levels));
     const levelHeight = maxLevel > 0 ? (svgHeight - 2 * margin) / maxLevel : 0;
-    
+
     Object.entries(nodesByLevel).forEach(([levelStr, nodeIds]) => {
       const level = parseInt(levelStr);
       const y = margin + level * levelHeight;
       const totalWidth = svgWidth - 2 * margin;
       const nodeSpacing = nodeIds.length > 1 ? totalWidth / (nodeIds.length - 1) : 0;
-      
+
       nodeIds.forEach((nodeId, index) => {
-        const x = nodeIds.length === 1 
-          ? svgWidth / 2 
+        const x = nodeIds.length === 1
+          ? svgWidth / 2
           : margin + index * nodeSpacing;
         positions[nodeId] = { x, y, level };
       });
     });
-    
+
     return positions;
   };
 
@@ -200,7 +200,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
     const centerX = 400;
     const centerY = 300;
     const radius = 200;
-    
+
     nodes.forEach((node, index) => {
       const angle = (2 * Math.PI * index) / nodes.length;
       positions[node.id] = {
@@ -209,7 +209,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
         level: 0
       };
     });
-    
+
     return positions;
   };
 
@@ -219,9 +219,9 @@ const ConceptLatticeAnalysis: React.FC = () => {
     const { nodes, edges } = latticeData;
     const svgWidth = 800;
     const svgHeight = 600;
-    
+
     // Choose layout based on view mode
-    const nodePositions = viewMode === 'hesse' 
+    const nodePositions = viewMode === 'hesse'
       ? calculateHesseLayout(nodes, edges)
       : calculateNetworkLayout(nodes);
 
@@ -321,7 +321,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
                     {node.is_top ? 'TOP' : 'BOTTOM'}
                   </text>
                 )}
-                
+
                 {/* Level indicator for Hesse diagram */}
                 {viewMode === 'hesse' && (
                   <text

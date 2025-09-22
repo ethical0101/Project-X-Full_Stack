@@ -236,7 +236,7 @@ Algorithm: Apriori
 
 **Pattern Density**: High - designed for maximum meaningful associations
 **Item Variety**: 60+ unique items across all categories
-**Relationship Types**: 
+**Relationship Types**:
 - Complementary (coffee-sugar)
 - Substitutable (bike-car for transport)
 - Categorical (clothing items together)
@@ -246,7 +246,7 @@ Algorithm: Apriori
 
 **Perfect Run Indicators:**
 - ✅ Mining completes in 5-10 seconds
-- ✅ Lattice completes in 3-8 seconds  
+- ✅ Lattice completes in 3-8 seconds
 - ✅ All visualizations populated with data
 - ✅ Clear category patterns visible
 - ✅ Interactive lattice navigation works

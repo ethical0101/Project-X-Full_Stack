@@ -8,7 +8,7 @@
 - **Transaction Patterns**:
   1. milk,bread (2 items)
   2. milk,bread,butter (3 items)
-  3. milk,butter (2 items)  
+  3. milk,butter (2 items)
   4. bread,butter (2 items)
   5. coffee,sugar (2 items)
   6. coffee,sugar,cream (3 items)
@@ -113,7 +113,7 @@ Algorithm: Apriori
 - **Lower Confidence**: Try 0.5
 
 ### **If Too Many Results:**
-- **Raise Support**: Try 0.4 or 0.5  
+- **Raise Support**: Try 0.4 or 0.5
 - **Raise Confidence**: Try 0.7 or 0.8
 
 ### **For Better Performance:**

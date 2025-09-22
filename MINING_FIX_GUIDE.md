@@ -112,9 +112,9 @@ processing_results = {}
 ```python
 def upload_data():
     global current_data, current_itemsets, current_rules, current_transactions, processing_results
-    
+
     # ... parsing logic ...
-    
+
     # Store the data
     current_data = df
     current_transactions = transactions  # ← NEW: Store globally
@@ -124,10 +124,10 @@ def upload_data():
 ```python
 def mine_patterns():
     global current_data, current_itemsets, current_rules, current_transactions, processing_results
-    
+
     if current_data is None or current_transactions is None:  # ← NEW: Check both
         return jsonify({"error": "No data uploaded. Please upload data first."}), 400
-    
+
     # Use the global transactions
     transactions = current_transactions  # ← NEW: Use stored transactions
 ```
@@ -163,7 +163,7 @@ After running the backend, verify these work:
 
 ### **Check Backend Console For:**
 1. **"No transactions found"** → Upload issue
-2. **"Empty transactions array"** → Parsing issue  
+2. **"Empty transactions array"** → Parsing issue
 3. **"No frequent itemsets"** → Support too high
 4. **Connection errors** → Server not running
 
@@ -177,7 +177,7 @@ After running the backend, verify these work:
 
 **You'll know it's working when:**
 - ✅ Upload completes in 2-3 seconds
-- ✅ Mining completes in 5-10 seconds  
+- ✅ Mining completes in 5-10 seconds
 - ✅ Dashboard shows 60+ itemsets
 - ✅ Visualizations render with data
 - ✅ Association rules table populates

@@ -77,7 +77,7 @@ export default function Analytics({ data }: AnalyticsProps) {
       {/* Rule Quality Analysis */}
       <div className="bg-white p-6 rounded-lg shadow border mb-8">
         <h3 className="text-lg font-semibold mb-4">Rule Quality Analysis</h3>
-        
+
         {/* Quality Metrics Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <div className="text-center">
@@ -156,7 +156,7 @@ export default function Analytics({ data }: AnalyticsProps) {
                 })}
               </tbody>
             </table>
-            
+
             {data.rules.length > 10 && (
               <div className="text-center py-3 text-sm text-gray-500">
                 Showing top 10 rules of {data.rules.length} total rules

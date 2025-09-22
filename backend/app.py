@@ -12,7 +12,10 @@ import os
 from fca import build_concept_lattice, lattice_to_json
 
 app = Flask(__name__)
-CORS(app)
+
+# Configure CORS for production
+cors_origins = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://localhost:3001').split(',')
+CORS(app, origins=cors_origins)
 
 # Global variables to store processed data
 current_data = None
@@ -618,4 +621,8 @@ def test_lattice():
         return jsonify({'error': f'Error in test lattice: {str(e)}'}), 500
 
 if __name__ == '__main__':
+    # For local development
     app.run(debug=True, host='0.0.0.0', port=5000)
+else:
+    # For Vercel deployment
+    app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

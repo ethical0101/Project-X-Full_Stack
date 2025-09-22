@@ -3,7 +3,7 @@ import json
 
 def test_mining_with_universal_dataset():
     """Test pattern mining with the universal dataset"""
-    
+
     # Read the universal dataset
     try:
         with open('../universal_dataset.csv', 'r') as f:
@@ -13,7 +13,7 @@ def test_mining_with_universal_dataset():
     except FileNotFoundError:
         print("ERROR: universal_dataset.csv not found")
         return
-    
+
     # Test upload endpoint
     print("\n=== TESTING UPLOAD ===")
     try:
@@ -24,7 +24,7 @@ def test_mining_with_universal_dataset():
     except Exception as e:
         print(f"Upload Error: {e}")
         return
-    
+
     # Test mining endpoint with specific parameters
     print("\n=== TESTING MINING ===")
     try:
@@ -35,19 +35,19 @@ def test_mining_with_universal_dataset():
         }
         response = requests.post('http://localhost:5000/api/mine', json=mining_data)
         print(f"Mining Status: {response.status_code}")
-        
+
         if response.status_code == 200:
             result = response.json()
             print(f"✅ SUCCESS!")
             print(f"Frequent Itemsets: {len(result.get('frequent_itemsets', []))}")
             print(f"Association Rules: {len(result.get('association_rules', []))}")
-            
+
             # Show some sample results
             if result.get('frequent_itemsets'):
                 print(f"\nSample Frequent Itemsets:")
                 for i, itemset in enumerate(result['frequent_itemsets'][:5]):
                     print(f"  {i+1}. {itemset}")
-            
+
             if result.get('association_rules'):
                 print(f"\nSample Association Rules:")
                 for i, rule in enumerate(result['association_rules'][:5]):

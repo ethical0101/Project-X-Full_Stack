@@ -7,7 +7,7 @@
 - **Total Transactions**: 100
 - **Unique Items**: ~60 different items
 - **Categories**: Food & Drinks, Electronics, Personal Care, Clothing, Transportation, Entertainment, Sports
-- **Pattern Types**: 
+- **Pattern Types**:
   - Strong associations (coffee-sugar, laptop-mouse)
   - Category clusters (clothing items, food items)
   - Multi-item combinations (3-4 items per category)
