@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_BASE_URL } from '../utils/api';
 
 interface ConceptNode {
   id: number;
@@ -62,7 +63,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('http://localhost:5000/api/concept-lattice', {
+      const response = await fetch(`${API_BASE_URL}/api/concept-lattice`, {
         method: 'POST',
         body: formData,
       });
@@ -87,7 +88,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:5000/api/test-lattice', {
+      const response = await fetch(`${API_BASE_URL}/api/test-lattice`, {
         method: 'POST',
       });
 
