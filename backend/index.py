@@ -14,6 +14,15 @@ app = Flask(__name__)
 cors_origins = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://localhost:3001,https://project-x-full-stack.vercel.app').split(',')
 CORS(app, origins=['*'], methods=['GET', 'POST', 'OPTIONS'], allow_headers=['Content-Type', 'Authorization', 'Accept'])
 
+# Add explicit CORS headers to all responses
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
 # Add explicit OPTIONS handler for preflight requests
 @app.before_request
 def handle_preflight():
@@ -131,6 +140,11 @@ def home():
 @app.route('/health')
 def health():
     return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
+
+# Explicit OPTIONS handler for all routes
+@app.route('/<path:path>', methods=['OPTIONS'])
+def handle_options(path):
+    return jsonify({}), 200
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
