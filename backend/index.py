@@ -12,7 +12,17 @@ app = Flask(__name__)
 
 # Configure CORS for production
 cors_origins = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://localhost:3001,https://project-x-full-stack.vercel.app').split(',')
-CORS(app, origins=cors_origins, methods=['GET', 'POST', 'OPTIONS'], allow_headers=['Content-Type'])
+CORS(app, origins=['*'], methods=['GET', 'POST', 'OPTIONS'], allow_headers=['Content-Type', 'Authorization', 'Accept'])
+
+# Add explicit OPTIONS handler for preflight requests
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = jsonify({})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', "*")
+        response.headers.add('Access-Control-Allow-Methods', "*")
+        return response
 
 # Global variables to store processed data
 processed_transactions = None
@@ -288,8 +298,9 @@ def get_analytics():
 
         # Top items by frequency
         item_counter = Counter()
-        for row in original_data:
-            item_counter[row['Item']] += 1
+        if original_data:
+            for row in original_data:
+                item_counter[row['Item']] += 1
         top_items = [{'item': item, 'frequency': count} for item, count in item_counter.most_common(10)]
 
         analytics = {

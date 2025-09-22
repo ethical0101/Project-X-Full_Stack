@@ -63,7 +63,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${API_BASE_URL}/api/concept-lattice`, {
+      const response = await fetch(`${API_BASE_URL}/concept-lattice`, {
         method: 'POST',
         body: formData,
       });
@@ -88,7 +88,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/test-lattice`, {
+      const response = await fetch(`${API_BASE_URL}/test-lattice`, {
         method: 'POST',
       });
 

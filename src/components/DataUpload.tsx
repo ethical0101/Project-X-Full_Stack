@@ -47,7 +47,7 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
       const formData = new FormData();
       formData.append('file', uploadedFile);
 
-      const uploadResponse = await fetch(`${API_BASE_URL}/api/upload`, {
+      const uploadResponse = await fetch(`${API_BASE_URL}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -60,7 +60,7 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
       const uploadResult = await uploadResponse.json();
 
       // Step 2: Mine patterns with default parameters
-      const miningResponse = await fetch(`${API_BASE_URL}/api/mine`, {
+      const miningResponse = await fetch(`${API_BASE_URL}/mine`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
