@@ -1,15 +1,12 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pandas as pd
-from mlxtend.frequent_patterns import apriori, fpgrowth, association_rules
-from mlxtend.preprocessing import TransactionEncoder
 import json
 import io
 import time
 from datetime import datetime
-import numpy as np
 import os
-from fca import build_concept_lattice, lattice_to_json
+import csv
+from collections import defaultdict, Counter
 
 app = Flask(__name__)
 
@@ -22,12 +19,102 @@ processed_transactions = None
 original_data = None
 algorithms_performance = {}
 
+def calculate_support(itemset, transactions):
+    """Calculate support for an itemset"""
+    count = 0
+    for transaction in transactions:
+        if all(item in transaction for item in itemset):
+            count += 1
+    return count / len(transactions)
+
+def find_frequent_itemsets(transactions, min_support):
+    """Simple Apriori implementation"""
+    # Get all unique items
+    all_items = set()
+    for transaction in transactions:
+        all_items.update(transaction)
+
+    frequent_itemsets = []
+
+    # Find frequent 1-itemsets
+    for item in all_items:
+        support = calculate_support([item], transactions)
+        if support >= min_support:
+            frequent_itemsets.append({
+                'itemset': [item],
+                'support': support,
+                'length': 1
+            })
+
+    # Find frequent 2-itemsets
+    frequent_1_items = [fs['itemset'][0] for fs in frequent_itemsets]
+    for i, item1 in enumerate(frequent_1_items):
+        for item2 in frequent_1_items[i+1:]:
+            itemset = [item1, item2]
+            support = calculate_support(itemset, transactions)
+            if support >= min_support:
+                frequent_itemsets.append({
+                    'itemset': itemset,
+                    'support': support,
+                    'length': 2
+                })
+
+    return frequent_itemsets
+
+def generate_association_rules(frequent_itemsets, min_confidence=0.5):
+    """Generate association rules from frequent itemsets"""
+    rules = []
+
+    # Only generate rules from 2-itemsets for simplicity
+    for itemset_data in frequent_itemsets:
+        if itemset_data['length'] == 2:
+            items = itemset_data['itemset']
+            support_ab = itemset_data['support']
+
+            # Rule A -> B
+            support_a = next((fs['support'] for fs in frequent_itemsets
+                            if fs['itemset'] == [items[0]]), 0)
+            if support_a > 0:
+                confidence = support_ab / support_a
+                if confidence >= min_confidence:
+                    lift = confidence / next((fs['support'] for fs in frequent_itemsets
+                                            if fs['itemset'] == [items[1]]), 1)
+                    rules.append({
+                        'antecedents': [items[0]],
+                        'consequents': [items[1]],
+                        'support': support_ab,
+                        'confidence': confidence,
+                        'lift': lift,
+                        'conviction': (1 - next((fs['support'] for fs in frequent_itemsets
+                                              if fs['itemset'] == [items[1]]), 1)) / (1 - confidence) if confidence < 1 else None,
+                        'zhangs_metric': None
+                    })
+
+            # Rule B -> A
+            support_b = next((fs['support'] for fs in frequent_itemsets
+                            if fs['itemset'] == [items[1]]), 0)
+            if support_b > 0:
+                confidence = support_ab / support_b
+                if confidence >= min_confidence:
+                    lift = confidence / support_a
+                    rules.append({
+                        'antecedents': [items[1]],
+                        'consequents': [items[0]],
+                        'support': support_ab,
+                        'confidence': confidence,
+                        'lift': lift,
+                        'conviction': (1 - support_a) / (1 - confidence) if confidence < 1 else None,
+                        'zhangs_metric': None
+                    })
+
+    return rules
+
 @app.route('/')
 def home():
     return jsonify({
         "message": "Pattern Mining API",
         "status": "running",
-        "endpoints": ["/upload", "/mine", "/analytics", "/concept-lattice"],
+        "endpoints": ["/upload", "/mine", "/analytics"],
         "timestamp": datetime.now().isoformat()
     })
 
@@ -47,48 +134,54 @@ def upload_file():
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
 
-        # Read the CSV file
-        df = pd.read_csv(io.StringIO(file.read().decode('utf-8')))
+        # Read the CSV file manually
+        file_content = file.read().decode('utf-8')
+        csv_reader = csv.DictReader(io.StringIO(file_content))
 
-        # Store original data
-        original_data = df.copy()
+        # Store original data as list of dictionaries
+        data_rows = list(csv_reader)
+        original_data = data_rows
 
         # Validate required columns
         required_columns = ['TransactionID', 'Item']
-        if not all(col in df.columns for col in required_columns):
+        if not data_rows:
+            return jsonify({'error': 'Empty file'}), 400
+
+        first_row_keys = set(data_rows[0].keys())
+        if not all(col in first_row_keys for col in required_columns):
             return jsonify({
-                'error': f'Missing required columns. Expected: {required_columns}, Found: {list(df.columns)}'
+                'error': f'Missing required columns. Expected: {required_columns}, Found: {list(first_row_keys)}'
             }), 400
 
         # Group by TransactionID and create transaction lists
-        transactions = df.groupby('TransactionID')['Item'].apply(list).tolist()
+        transactions_dict = {}
+        for row in data_rows:
+            transaction_id = row['TransactionID']
+            item = row['Item']
+            if transaction_id not in transactions_dict:
+                transactions_dict[transaction_id] = []
+            transactions_dict[transaction_id].append(item)
 
-        # Use TransactionEncoder to create binary matrix
-        te = TransactionEncoder()
-        te_ary = te.fit_transform(transactions)
-        # Ensure we have a numpy array
-        try:
-            if hasattr(te_ary, 'toarray'):
-                te_ary = te_ary.toarray()
-        except:
-            pass
-        processed_df = pd.DataFrame(te_ary, columns=te.columns_)
+        transactions = list(transactions_dict.values())
+        processed_transactions = transactions
 
-        # Store processed transactions globally
-        processed_transactions = processed_df
+        # Get all unique items
+        all_items = set()
+        for transaction in transactions:
+            all_items.update(transaction)
 
         # Get basic statistics
         stats = {
             'total_transactions': len(transactions),
-            'unique_items': len(te.columns_),
-            'average_items_per_transaction': np.mean([len(t) for t in transactions]),
+            'unique_items': len(all_items),
+            'average_items_per_transaction': sum(len(t) for t in transactions) / len(transactions),
             'sample_transactions': transactions[:5] if transactions else []
         }
 
         return jsonify({
             'message': 'File uploaded and processed successfully',
             'stats': stats,
-            'columns': list(te.columns_)
+            'columns': list(all_items)
         })
 
     except Exception as e:
@@ -104,16 +197,12 @@ def mine_patterns():
 
         data = request.get_json()
         min_support = data.get('min_support', 0.1)
-        algorithm = data.get('algorithm', 'apriori')
+        algorithm = data.get('algorithm', 'apriori')  # Only apriori supported in this minimal version
 
         start_time = time.time()
 
-        if algorithm == 'apriori':
-            frequent_itemsets = apriori(processed_transactions, min_support=min_support, use_colnames=True)
-        elif algorithm == 'fpgrowth':
-            frequent_itemsets = fpgrowth(processed_transactions, min_support=min_support, use_colnames=True)
-        else:
-            return jsonify({'error': 'Invalid algorithm. Use "apriori" or "fpgrowth"'}), 400
+        # Find frequent itemsets
+        frequent_itemsets = find_frequent_itemsets(processed_transactions, min_support)
 
         end_time = time.time()
         execution_time = end_time - start_time
@@ -126,7 +215,7 @@ def mine_patterns():
             'timestamp': datetime.now().isoformat()
         }
 
-        if frequent_itemsets.empty:
+        if not frequent_itemsets:
             return jsonify({
                 'frequent_itemsets': [],
                 'association_rules': [],
@@ -135,33 +224,11 @@ def mine_patterns():
             })
 
         # Generate association rules
-        rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=0.5)
-
-        # Convert to JSON-serializable format
-        itemsets_json = []
-        for _, row in frequent_itemsets.iterrows():
-            itemsets_json.append({
-                'itemset': list(row['itemsets']),
-                'support': float(row['support']),
-                'length': len(row['itemsets'])
-            })
-
-        rules_json = []
-        if not rules.empty:
-            for _, row in rules.iterrows():
-                rules_json.append({
-                    'antecedents': list(row['antecedents']),
-                    'consequents': list(row['consequents']),
-                    'support': float(row['support']),
-                    'confidence': float(row['confidence']),
-                    'lift': float(row['lift']),
-                    'conviction': float(row['conviction']) if not np.isinf(row['conviction']) else None,
-                    'zhangs_metric': float(row['zhangs_metric']) if 'zhangs_metric' in row else None
-                })
+        rules = generate_association_rules(frequent_itemsets, min_confidence=0.5)
 
         return jsonify({
-            'frequent_itemsets': itemsets_json,
-            'association_rules': rules_json,
+            'frequent_itemsets': frequent_itemsets,
+            'association_rules': rules,
             'performance': algorithms_performance[algorithm]
         })
 
@@ -178,9 +245,9 @@ def get_analytics():
 
         # Re-mine with default parameters for analytics
         min_support = 0.1
-        frequent_itemsets = apriori(processed_transactions, min_support=min_support, use_colnames=True)
+        frequent_itemsets = find_frequent_itemsets(processed_transactions, min_support)
 
-        if frequent_itemsets.empty:
+        if not frequent_itemsets:
             return jsonify({
                 'analytics': {
                     'total_itemsets': 0,
@@ -198,28 +265,41 @@ def get_analytics():
                 }
             })
 
-        rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=0.5)
+        rules = generate_association_rules(frequent_itemsets, min_confidence=0.5)
 
         # Generate analytics
+        support_values = [fs['support'] for fs in frequent_itemsets]
+        avg_support = sum(support_values) / len(support_values) if support_values else 0
+
+        # Support distribution
+        support_distribution = [
+            {'range': '0.0-0.2', 'count': sum(1 for s in support_values if s < 0.2)},
+            {'range': '0.2-0.4', 'count': sum(1 for s in support_values if 0.2 <= s < 0.4)},
+            {'range': '0.4-0.6', 'count': sum(1 for s in support_values if 0.4 <= s < 0.6)},
+            {'range': '0.6-0.8', 'count': sum(1 for s in support_values if 0.6 <= s < 0.8)},
+            {'range': '0.8-1.0', 'count': sum(1 for s in support_values if s >= 0.8)}
+        ]
+
+        # Length distribution
+        length_dist = {}
+        for fs in frequent_itemsets:
+            length = fs['length']
+            length_dist[length] = length_dist.get(length, 0) + 1
+
+        # Top items by frequency
+        item_counter = Counter()
+        for row in original_data:
+            item_counter[row['Item']] += 1
+        top_items = [{'item': item, 'frequency': count} for item, count in item_counter.most_common(10)]
+
         analytics = {
             'total_itemsets': len(frequent_itemsets),
-            'avg_support': float(frequent_itemsets['support'].mean()),
-            'support_distribution': [
-                {'range': '0.0-0.2', 'count': len(frequent_itemsets[frequent_itemsets['support'] < 0.2])},
-                {'range': '0.2-0.4', 'count': len(frequent_itemsets[(frequent_itemsets['support'] >= 0.2) & (frequent_itemsets['support'] < 0.4)])},
-                {'range': '0.4-0.6', 'count': len(frequent_itemsets[(frequent_itemsets['support'] >= 0.4) & (frequent_itemsets['support'] < 0.6)])},
-                {'range': '0.6-0.8', 'count': len(frequent_itemsets[(frequent_itemsets['support'] >= 0.6) & (frequent_itemsets['support'] < 0.8)])},
-                {'range': '0.8-1.0', 'count': len(frequent_itemsets[frequent_itemsets['support'] >= 0.8])}
-            ],
-            'itemset_length_distribution': frequent_itemsets.groupby(frequent_itemsets['itemsets'].apply(len)).size().to_dict(),
-            'top_items': [],
+            'avg_support': avg_support,
+            'support_distribution': support_distribution,
+            'itemset_length_distribution': length_dist,
+            'top_items': top_items,
             'performance_comparison': algorithms_performance
         }
-
-        # Calculate top items by frequency
-        if original_data is not None:
-            item_counts = original_data['Item'].value_counts().head(10)
-            analytics['top_items'] = [{'item': item, 'frequency': int(count)} for item, count in item_counts.items()]
 
         # Rules analysis
         rules_analysis = {
@@ -229,40 +309,36 @@ def get_analytics():
             'top_rules': []
         }
 
-        if not rules.empty:
+        if rules:
+            confidence_values = [r['confidence'] for r in rules]
+            lift_values = [r['lift'] for r in rules]
+
             # Confidence distribution
             rules_analysis['confidence_distribution'] = [
-                {'range': '0.5-0.6', 'count': len(rules[(rules['confidence'] >= 0.5) & (rules['confidence'] < 0.6)])},
-                {'range': '0.6-0.7', 'count': len(rules[(rules['confidence'] >= 0.6) & (rules['confidence'] < 0.7)])},
-                {'range': '0.7-0.8', 'count': len(rules[(rules['confidence'] >= 0.7) & (rules['confidence'] < 0.8)])},
-                {'range': '0.8-0.9', 'count': len(rules[(rules['confidence'] >= 0.8) & (rules['confidence'] < 0.9)])},
-                {'range': '0.9-1.0', 'count': len(rules[rules['confidence'] >= 0.9])}
+                {'range': '0.5-0.6', 'count': sum(1 for c in confidence_values if 0.5 <= c < 0.6)},
+                {'range': '0.6-0.7', 'count': sum(1 for c in confidence_values if 0.6 <= c < 0.7)},
+                {'range': '0.7-0.8', 'count': sum(1 for c in confidence_values if 0.7 <= c < 0.8)},
+                {'range': '0.8-0.9', 'count': sum(1 for c in confidence_values if 0.8 <= c < 0.9)},
+                {'range': '0.9-1.0', 'count': sum(1 for c in confidence_values if c >= 0.9)}
             ]
 
             # Lift distribution
             rules_analysis['lift_distribution'] = [
-                {'range': '1.0-1.5', 'count': len(rules[(rules['lift'] >= 1.0) & (rules['lift'] < 1.5)])},
-                {'range': '1.5-2.0', 'count': len(rules[(rules['lift'] >= 1.5) & (rules['lift'] < 2.0)])},
-                {'range': '2.0-3.0', 'count': len(rules[(rules['lift'] >= 2.0) & (rules['lift'] < 3.0)])},
-                {'range': '3.0+', 'count': len(rules[rules['lift'] >= 3.0])}
+                {'range': '1.0-1.5', 'count': sum(1 for l in lift_values if 1.0 <= l < 1.5)},
+                {'range': '1.5-2.0', 'count': sum(1 for l in lift_values if 1.5 <= l < 2.0)},
+                {'range': '2.0-3.0', 'count': sum(1 for l in lift_values if 2.0 <= l < 3.0)},
+                {'range': '3.0+', 'count': sum(1 for l in lift_values if l >= 3.0)}
             ]
 
             # Top rules by lift
-            top_rules = rules.nlargest(10, 'lift')
-            rules_analysis['top_rules'] = []
-            for _, row in top_rules.iterrows():
-                quality = 'Excellent' if row['lift'] > 2 and row['confidence'] > 0.8 else \
-                         'Good' if row['lift'] > 1.5 and row['confidence'] > 0.6 else \
-                         'Moderate' if row['lift'] > 1.2 and row['confidence'] > 0.5 else 'Weak'
+            top_rules = sorted(rules, key=lambda x: x['lift'], reverse=True)[:10]
+            for rule in top_rules:
+                quality = 'Excellent' if rule['lift'] > 2 and rule['confidence'] > 0.8 else \
+                         'Good' if rule['lift'] > 1.5 and rule['confidence'] > 0.6 else \
+                         'Moderate' if rule['lift'] > 1.2 and rule['confidence'] > 0.5 else 'Weak'
+                rule['quality'] = quality
 
-                rules_analysis['top_rules'].append({
-                    'antecedents': list(row['antecedents']),
-                    'consequents': list(row['consequents']),
-                    'support': float(row['support']),
-                    'confidence': float(row['confidence']),
-                    'lift': float(row['lift']),
-                    'quality': quality
-                })
+            rules_analysis['top_rules'] = top_rules
 
         return jsonify({
             'analytics': analytics,
@@ -271,37 +347,6 @@ def get_analytics():
 
     except Exception as e:
         return jsonify({'error': f'Error generating analytics: {str(e)}'}), 500
-
-@app.route('/concept-lattice', methods=['POST'])
-def generate_concept_lattice():
-    global processed_transactions
-
-    try:
-        if processed_transactions is None:
-            return jsonify({'error': 'No data uploaded. Please upload a file first.'}), 400
-
-        data = request.get_json()
-        max_concepts = data.get('max_concepts', 50)
-
-        # Build concept lattice
-        context = processed_transactions.values
-        objects = [f"T{i}" for i in range(len(context))]
-        attributes = list(processed_transactions.columns)
-
-        lattice = build_concept_lattice(context, objects, attributes, max_concepts)
-        lattice_json = lattice_to_json(lattice)
-
-        return jsonify({
-            'lattice': lattice_json,
-            'stats': {
-                'total_concepts': len(lattice.concepts) if hasattr(lattice, 'concepts') else 0,
-                'objects_count': len(objects),
-                'attributes_count': len(attributes)
-            }
-        })
-
-    except Exception as e:
-        return jsonify({'error': f'Error generating concept lattice: {str(e)}'}), 500
 
 # This is required for Vercel - export the Flask app
 app_instance = app
