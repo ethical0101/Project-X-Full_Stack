@@ -348,8 +348,7 @@ def get_analytics():
     except Exception as e:
         return jsonify({'error': f'Error generating analytics: {str(e)}'}), 500
 
-# This is required for Vercel - export the Flask app
-app_instance = app
+# Export for Vercel - the app variable is automatically detected
 
 # For local development
 if __name__ == '__main__':
