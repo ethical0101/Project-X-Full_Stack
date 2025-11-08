@@ -222,13 +222,14 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
               </label>
               <select
                 value={algorithm}
-                onChange={(e) => setAlgorithm(e.target.value as 'apriori' | 'fpgrowth')}
+                onChange={(e) => setAlgorithm(e.target.value as 'apriori' | 'fpgrowth' | 'eclat')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
               >
                 <option value="apriori">Apriori</option>
                 <option value="fpgrowth">FP-Growth</option>
+                <option value="eclat">ECLAT</option>
               </select>
-              <div className="text-xs text-gray-500 mt-1">FP-Growth is faster</div>
+              <div className="text-xs text-gray-500 mt-1">FP-Growth and ECLAT are faster</div>
             </div>
           </div>
         </div>
