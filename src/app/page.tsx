@@ -25,6 +25,7 @@ export default function Home() {
 
   const tabs = [
     { id: 'upload', name: 'Data Upload', icon: '📁' },
+    { id: 'generator', name: 'Dataset Generator', icon: '🎲' },
     { id: 'dashboard', name: 'Dashboard', icon: '📊' },
     { id: 'analytics', name: 'Analytics', icon: '🔍' },
     { id: 'visualizations', name: 'Visualizations', icon: '📈' },
