@@ -60,6 +60,33 @@ def health_check():
     """Health check endpoint"""
     return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
 
+@app.route('/status', methods=['GET'])
+def get_status():
+    """Get current processing status and progress"""
+    global processing_state, current_data, current_itemsets, current_rules
+
+    status_data = {
+        "processing": processing_state.copy(),
+        "data_status": {
+            "has_data": current_data is not None,
+            "has_itemsets": current_itemsets is not None,
+            "has_rules": current_rules is not None,
+            "itemsets_count": len(current_itemsets) if current_itemsets is not None else 0,
+            "rules_count": len(current_rules) if current_rules is not None else 0
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+    # Add time estimates if processing
+    if processing_state["is_processing"] and processing_state["started_at"]:
+        elapsed = (datetime.now() - processing_state["started_at"]).total_seconds()
+        if processing_state["progress"] > 0:
+            total_estimated = elapsed / (processing_state["progress"] / 100)
+            remaining = total_estimated - elapsed
+            status_data["processing"]["estimated_completion"] = datetime.now().timestamp() + remaining
+
+    return jsonify(status_data)
+
 @app.route('/upload', methods=['POST'])
 def upload_data():
     """Upload and process transaction data"""
