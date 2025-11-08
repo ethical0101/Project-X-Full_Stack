@@ -48,7 +48,8 @@ def root():
             "analytics": "/analytics - GET - Get analytics data",
             "results": "/results - GET - Get mining results",
             "generate-dataset": "/generate-dataset - POST - Generate synthetic dataset",
-            "download-dataset": "/download-dataset/<filename> - GET - Download generated dataset"
+            "download-dataset": "/download-dataset/<filename> - GET - Download generated dataset",
+            "status": "/status - GET - Get processing status and progress"
         },
         "frontend": "http://localhost:3000",
         "timestamp": datetime.now().isoformat()
