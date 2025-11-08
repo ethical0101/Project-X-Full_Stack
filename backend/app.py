@@ -98,8 +98,65 @@ def upload_data():
                     transactions = []  # Initialize empty, will handle in fallback
             else:
                 return jsonify({"error": "Invalid JSON format"}), 400
+        elif file.filename and (file.filename.endswith('.xlsx') or file.filename.endswith('.xls')):
+            # Check file size for chunking decision
+            file.seek(0, 2)  # Seek to end
+            file_size = file.tell()
+            file.seek(0)  # Reset to beginning
+
+            # If file is large (>10MB), use chunking
+            if file_size > 10 * 1024 * 1024:  # 10MB threshold
+                # Use chunking for large Excel files
+                transactions = []
+                chunk_size = 50000
+
+                # Read Excel file in chunks
+                xl = pd.ExcelFile(file)
+                sheet_name = xl.sheet_names[0]
+
+                # Read header first
+                df_header = pd.read_excel(file, sheet_name=sheet_name, nrows=1)
+                skiprows = 1
+                chunk_num = 0
+
+                while True:
+                    try:
+                        df_chunk = pd.read_excel(
+                            file,
+                            sheet_name=sheet_name,
+                            nrows=chunk_size,
+                            skiprows=skiprows,
+                            header=None
+                        )
+
+                        if df_chunk.empty:
+                            break
+
+                        # Rename columns to match header
+                        columns = {i: col for i, col in enumerate(df_header.columns.tolist())}
+                        df_chunk.rename(columns=columns, inplace=True)
+
+                        # Process chunk into transactions
+                        chunk_transactions = process_dataframe_to_transactions(df_chunk)
+                        transactions.extend(chunk_transactions)
+
+                        skiprows += chunk_size
+                        chunk_num += 1
+
+                        print(f"Processed Excel chunk {chunk_num} with {len(chunk_transactions)} transactions")
+
+                    except Exception as e:
+                        print(f"Error processing Excel chunk: {e}")
+                        break
+            else:
+                # Small Excel file - read all at once
+                df = pd.read_excel(file)
+                transactions = process_dataframe_to_transactions(df)
+
+            # Create compatibility DataFrame
+            df = pd.DataFrame({'transaction_id': range(len(transactions))})
         else:
-            return jsonify({"error": "Unsupported file format. Please upload CSV or JSON"}), 400
+            return jsonify({"error": "Unsupported file format. Please upload CSV, JSON, or Excel (.xlsx/.xls) files"}), 400
 
         # Store the data
         current_data = df
