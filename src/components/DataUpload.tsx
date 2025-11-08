@@ -15,7 +15,7 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [minSupport, setMinSupport] = useState(0.05);
   const [minConfidence, setMinConfidence] = useState(0.3);
-  const [algorithm, setAlgorithm] = useState<'apriori' | 'fpgrowth'>('apriori');
+  const [algorithm, setAlgorithm] = useState<'apriori' | 'fpgrowth' | 'eclat'>('apriori');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
