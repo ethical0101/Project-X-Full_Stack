@@ -73,12 +73,24 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
 
   const processData = async () => {
     if (!uploadedFile) {
-      toast.error('Please upload a file first');
+      handleError('Please upload a file first');
+      return;
+    }
+
+    // Validate parameters
+    if (minSupport < 0.01 || minSupport > 0.5) {
+      handleError('Minimum support must be between 1% and 50%');
+      return;
+    }
+    if (minConfidence < 0.1 || minConfidence > 1.0) {
+      handleError('Minimum confidence must be between 10% and 100%');
       return;
     }
 
     setIsProcessing(true);
     onProcessingStart?.(); // Notify parent that processing started
+    handleInfo(`Processing file: ${uploadedFile.name}`);
+
     try {
       // Step 1: Upload the file
       const formData = new FormData();
@@ -90,13 +102,13 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
       });
 
       if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json();
-        throw new Error(errorData.error || 'Upload failed');
+        throw handleApiError(uploadResponse, 'File Upload');
       }
 
       const uploadResult = await uploadResponse.json();
 
-      // Step 2: Mine patterns with default parameters
+      // Step 2: Mine patterns with specified parameters
+      handleInfo(`Mining patterns using ${algorithm} algorithm...`);
       const miningResponse = await fetch(`${API_BASE_URL}/mine`, {
         method: 'POST',
         headers: {
@@ -110,8 +122,7 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
       });
 
       if (!miningResponse.ok) {
-        const errorData = await miningResponse.json();
-        throw new Error(errorData.error || 'Mining failed');
+        throw handleApiError(miningResponse, 'Pattern Mining');
       }
 
       const miningResult = await miningResponse.json();
