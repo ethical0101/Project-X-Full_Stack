@@ -19,16 +19,20 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <ErrorProvider>
-          <nav className="bg-primary-600 text-white p-4">
-            <div className="container mx-auto">
-              <h1 className="text-2xl font-bold">Frequent Pattern Mining</h1>
-            </div>
-          </nav>
-          <main className="min-h-screen bg-gray-50">
-            {children}
-          </main>
-        </ErrorProvider>
+        <ErrorBoundary>
+          <ErrorProvider>
+            <nav className="bg-primary-600 text-white p-4">
+              <div className="container mx-auto">
+                <h1 className="text-2xl font-bold">Frequent Pattern Mining</h1>
+              </div>
+            </nav>
+            <main className="min-h-screen bg-gray-50">
+              <ErrorBoundary>
+                {children}
+              </ErrorBoundary>
+            </main>
+          </ErrorProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );
