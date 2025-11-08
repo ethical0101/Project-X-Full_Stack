@@ -2,8 +2,8 @@
 
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import toast from 'react-hot-toast';
 import { API_BASE_URL } from '../utils/api';
+import { useError, handleApiError } from '@/contexts/ErrorContext';
 
 interface DataUploadProps {
   onDataProcessed: (data: any) => void;
@@ -15,33 +15,82 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [minSupport, setMinSupport] = useState(0.05);
   const [minConfidence, setMinConfidence] = useState(0.3);
-  const [algorithm, setAlgorithm] = useState<'apriori' | 'fpgrowth'>('apriori');
+  const [algorithm, setAlgorithm] = useState<'apriori' | 'fpgrowth' | 'eclat'>('apriori');
+  const { handleError, handleSuccess, handleInfo } = useError();
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const validateFile = (file: File): string | null => {
+    // Check file size (max 50MB)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (file.size > maxSize) {
+      return 'File size exceeds 50MB limit';
+    }
+
+    // Check file extension
+    const allowedExtensions = ['.csv', '.json', '.xlsx', '.xls'];
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+    if (!allowedExtensions.includes(fileExtension)) {
+      return 'Invalid file format. Please upload CSV, JSON, or Excel files';
+    }
+
+    return null;
+  };
+
+  const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
+    // Handle rejected files
+    if (rejectedFiles.length > 0) {
+      const rejection = rejectedFiles[0];
+      if (rejection.errors.some((error: any) => error.code === 'file-invalid-type')) {
+        handleError('Invalid file type. Please upload CSV, JSON, or Excel files');
+      } else if (rejection.errors.some((error: any) => error.code === 'file-too-large')) {
+        handleError('File too large. Maximum file size is 50MB');
+      }
+      return;
+    }
+
     const file = acceptedFiles[0];
     if (file) {
+      const validationError = validateFile(file);
+      if (validationError) {
+        handleError(validationError);
+        return;
+      }
+
       setUploadedFile(file);
-      toast.success('File uploaded successfully!');
+      handleSuccess(`File "${file.name}" uploaded successfully!`);
     }
-  }, []);
+  }, [handleError, handleSuccess]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
       'application/json': ['.json'],
       'text/csv': ['.csv'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
     },
     multiple: false,
   });
 
   const processData = async () => {
     if (!uploadedFile) {
-      toast.error('Please upload a file first');
+      handleError('Please upload a file first');
+      return;
+    }
+
+    // Validate parameters
+    if (minSupport < 0.01 || minSupport > 0.5) {
+      handleError('Minimum support must be between 1% and 50%');
+      return;
+    }
+    if (minConfidence < 0.1 || minConfidence > 1.0) {
+      handleError('Minimum confidence must be between 10% and 100%');
       return;
     }
 
     setIsProcessing(true);
     onProcessingStart?.(); // Notify parent that processing started
+    handleInfo(`Processing file: ${uploadedFile.name}`);
+
     try {
       // Step 1: Upload the file
       const formData = new FormData();
@@ -53,13 +102,13 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
       });
 
       if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json();
-        throw new Error(errorData.error || 'Upload failed');
+        throw handleApiError(uploadResponse, 'File Upload');
       }
 
       const uploadResult = await uploadResponse.json();
 
-      // Step 2: Mine patterns with default parameters
+      // Step 2: Mine patterns with specified parameters
+      handleInfo(`Mining patterns using ${algorithm} algorithm...`);
       const miningResponse = await fetch(`${API_BASE_URL}/mine`, {
         method: 'POST',
         headers: {
@@ -73,8 +122,7 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
       });
 
       if (!miningResponse.ok) {
-        const errorData = await miningResponse.json();
-        throw new Error(errorData.error || 'Mining failed');
+        throw handleApiError(miningResponse, 'Pattern Mining');
       }
 
       const miningResult = await miningResponse.json();
@@ -100,9 +148,9 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
       console.log('Association rules count:', combinedResult.association_rules?.length);
 
       onDataProcessed(combinedResult);
-      toast.success('Data processed and patterns mined successfully!');
+      handleSuccess(`Successfully processed ${combinedResult.summary?.transaction_count || 0} transactions and found ${combinedResult.association_rules?.length || 0} association rules!`);
     } catch (error) {
-      toast.error(`Failed to process data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      handleError(error, 'Data Processing');
       console.error('Error:', error);
     } finally {
       setIsProcessing(false);
@@ -146,7 +194,7 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
               Drag and drop a transaction file here, or click to select
             </p>
             <p className="text-sm text-gray-500">
-              Supports JSON and CSV files
+              Supports JSON, CSV, and Excel files
             </p>
           </div>
         )}
@@ -220,13 +268,14 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
               </label>
               <select
                 value={algorithm}
-                onChange={(e) => setAlgorithm(e.target.value as 'apriori' | 'fpgrowth')}
+                onChange={(e) => setAlgorithm(e.target.value as 'apriori' | 'fpgrowth' | 'eclat')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
               >
                 <option value="apriori">Apriori</option>
                 <option value="fpgrowth">FP-Growth</option>
+                <option value="eclat">ECLAT</option>
               </select>
-              <div className="text-xs text-gray-500 mt-1">FP-Growth is faster</div>
+              <div className="text-xs text-gray-500 mt-1">FP-Growth and ECLAT are faster</div>
             </div>
           </div>
         </div>
@@ -245,6 +294,13 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
 ]`}
           </pre>
           <p><strong>CSV Format:</strong> transaction_id, item columns</p>
+          <pre className="bg-blue-100 p-2 rounded text-xs">
+{`transaction_id,item
+1,milk
+1,bread
+2,rice`}
+          </pre>
+          <p><strong>Excel Format:</strong> transaction_id and item columns, or one transaction per row</p>
           <pre className="bg-blue-100 p-2 rounded text-xs">
 {`transaction_id,item
 1,milk

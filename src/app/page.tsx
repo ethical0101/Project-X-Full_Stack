@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import DataUpload from '@/components/DataUpload';
+import DatasetGenerator from '@/components/DatasetGenerator';
 import Dashboard from '@/components/Dashboard';
 import Analytics from '@/components/Analytics';
 import Visualizations from '@/components/Visualizations';
@@ -9,7 +10,7 @@ import ConceptLatticeAnalysis from '@/components/ConceptLatticeAnalysis';
 import ProgressIndicator from '@/components/ProgressIndicator';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'upload' | 'dashboard' | 'analytics' | 'visualizations' | 'lattice'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'generator' | 'dashboard' | 'analytics' | 'visualizations' | 'lattice'>('upload');
   const [data, setData] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -24,6 +25,7 @@ export default function Home() {
 
   const tabs = [
     { id: 'upload', name: 'Data Upload', icon: '📁' },
+    { id: 'generator', name: 'Dataset Generator', icon: '🎲' },
     { id: 'dashboard', name: 'Dashboard', icon: '📊' },
     { id: 'analytics', name: 'Analytics', icon: '🔍' },
     { id: 'visualizations', name: 'Visualizations', icon: '📈' },
@@ -60,6 +62,9 @@ export default function Home() {
             onDataProcessed={handleDataProcessed}
             onProcessingStart={handleProcessingStart}
           />
+        )}
+        {activeTab === 'generator' && (
+          <DatasetGenerator onDataGenerated={setData} />
         )}
         {activeTab === 'dashboard' && (
           <Dashboard data={data} />
