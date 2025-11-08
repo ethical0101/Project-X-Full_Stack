@@ -148,9 +148,9 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
       console.log('Association rules count:', combinedResult.association_rules?.length);
 
       onDataProcessed(combinedResult);
-      toast.success('Data processed and patterns mined successfully!');
+      handleSuccess(`Successfully processed ${combinedResult.summary?.transaction_count || 0} transactions and found ${combinedResult.association_rules?.length || 0} association rules!`);
     } catch (error) {
-      toast.error(`Failed to process data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      handleError(error, 'Data Processing');
       console.error('Error:', error);
     } finally {
       setIsProcessing(false);
