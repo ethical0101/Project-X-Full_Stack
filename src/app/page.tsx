@@ -63,6 +63,9 @@ export default function Home() {
             onProcessingStart={handleProcessingStart}
           />
         )}
+        {activeTab === 'generator' && (
+          <DatasetGenerator onDataGenerated={setData} />
+        )}
         {activeTab === 'dashboard' && (
           <Dashboard data={data} />
         )}
