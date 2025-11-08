@@ -254,6 +254,13 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
 1,bread
 2,rice`}
           </pre>
+          <p><strong>Excel Format:</strong> transaction_id and item columns, or one transaction per row</p>
+          <pre className="bg-blue-100 p-2 rounded text-xs">
+{`transaction_id,item
+1,milk
+1,bread
+2,rice`}
+          </pre>
         </div>
       </div>
     </div>
