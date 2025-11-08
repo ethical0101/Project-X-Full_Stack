@@ -36,7 +36,9 @@ def root():
             "upload": "/upload - POST - Upload transaction data",
             "mine": "/mine - POST - Mine frequent patterns",
             "analytics": "/analytics - GET - Get analytics data",
-            "results": "/results - GET - Get mining results"
+            "results": "/results - GET - Get mining results",
+            "generate-dataset": "/generate-dataset - POST - Generate synthetic dataset",
+            "download-dataset": "/download-dataset/<filename> - GET - Download generated dataset"
         },
         "frontend": "http://localhost:3000",
         "timestamp": datetime.now().isoformat()
