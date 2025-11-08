@@ -591,6 +591,236 @@ def debug_data():
 
     return jsonify(debug_info)
 
+@app.route('/generate-dataset', methods=['POST'])
+def generate_dataset():
+    """Generate synthetic transaction datasets"""
+    try:
+        # Get parameters from request
+        data = request.get_json()
+
+        # Validate required parameters
+        required_fields = ['number_of_transactions', 'number_of_items', 'avg_items_per_transaction', 'distribution_type', 'output_format']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({"error": f"Missing required parameter: {field}"}), 400
+
+        number_of_transactions = int(data['number_of_transactions'])
+        number_of_items = int(data['number_of_items'])
+        avg_items_per_transaction = float(data['avg_items_per_transaction'])
+        distribution_type = data['distribution_type'].lower()
+        output_format = data['output_format'].lower()
+
+        # Validate parameter ranges
+        if number_of_transactions < 1 or number_of_transactions > 1000000:
+            return jsonify({"error": "Number of transactions must be between 1 and 1,000,000"}), 400
+
+        if number_of_items < 1 or number_of_items > 10000:
+            return jsonify({"error": "Number of items must be between 1 and 10,000"}), 400
+
+        if avg_items_per_transaction < 0.1 or avg_items_per_transaction > number_of_items:
+            return jsonify({"error": f"Average items per transaction must be between 0.1 and {number_of_items}"}), 400
+
+        if distribution_type not in ['uniform', 'normal', 'exponential', 'zipf']:
+            return jsonify({"error": "Distribution type must be: uniform, normal, exponential, or zipf"}), 400
+
+        if output_format not in ['csv', 'xlsx', 'json']:
+            return jsonify({"error": "Output format must be: csv, xlsx, or json"}), 400
+
+        print(f"Generating dataset: {number_of_transactions} transactions, {number_of_items} items, {distribution_type} distribution")
+
+        # Generate synthetic dataset
+        start_time = time.time()
+        transactions = generate_synthetic_transactions(
+            number_of_transactions,
+            number_of_items,
+            avg_items_per_transaction,
+            distribution_type
+        )
+        generation_time = time.time() - start_time
+
+        print(f"Generated {len(transactions)} transactions in {generation_time:.2f} seconds")
+
+        # Create DataFrame for export
+        if data.get('export_format') == 'item_per_row':
+            # Item-per-row format: transaction_id, item
+            rows = []
+            for trans_id, items in enumerate(transactions, 1):
+                for item in items:
+                    rows.append({'transaction_id': trans_id, 'item': item})
+            df = pd.DataFrame(rows)
+        else:
+            # Transaction-per-row format
+            max_items = max(len(t) for t in transactions)
+            columns = ['transaction_id'] + [f'item_{i+1}' for i in range(max_items)]
+            rows = []
+            for trans_id, items in enumerate(transactions, 1):
+                row = {'transaction_id': trans_id}
+                for i in range(max_items):
+                    if i < len(items):
+                        row[f'item_{i+1}'] = items[i]
+                    else:
+                        row[f'item_{i+1}'] = None
+                rows.append(row)
+            df = pd.DataFrame(columns=columns, data=rows)
+
+        # Generate file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"synthetic_dataset_{timestamp}.{output_format}"
+        filepath = f"/tmp/{filename}"
+
+        # Export based on format
+        if output_format == 'csv':
+            df.to_csv(filepath, index=False)
+            mimetype = 'text/csv'
+        elif output_format == 'xlsx':
+            df.to_excel(filepath, index=False, engine='openpyxl')
+            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        else:  # json
+            json_data = {'transactions': transactions}
+            with open(filepath, 'w') as f:
+                json.dump(json_data, f, indent=2)
+            mimetype = 'application/json'
+
+        # Generate preview (first 10 transactions)
+        preview_transactions = transactions[:10]
+
+        # Calculate statistics
+        item_counts = {}
+        for transaction in transactions:
+            for item in transaction:
+                item_counts[item] = item_counts.get(item, 0) + 1
+
+        item_frequencies = []
+        for item, count in sorted(item_counts.items(), key=lambda x: x[1], reverse=True):
+            item_frequencies.append({
+                "item": item,
+                "frequency": count,
+                "support": count / len(transactions)
+            })
+
+        stats = {
+            "total_transactions": len(transactions),
+            "unique_items": len(item_counts),
+            "avg_items_per_transaction": sum(len(t) for t in transactions) / len(transactions),
+            "min_items": min(len(t) for t in transactions),
+            "max_items": max(len(t) for t in transactions),
+            "generation_time": generation_time,
+            "file_size": os.path.getsize(filepath)
+        }
+
+        return jsonify({
+            "message": "Dataset generated successfully",
+            "stats": stats,
+            "preview": preview_transactions,
+            "download_url": f"/download-dataset/{filename}",
+            "item_frequencies": item_frequencies[:20],  # Top 20 items
+            "parameters": {
+                "number_of_transactions": number_of_transactions,
+                "number_of_items": number_of_items,
+                "avg_items_per_transaction": avg_items_per_transaction,
+                "distribution_type": distribution_type,
+                "output_format": output_format
+            }
+        })
+
+    except Exception as e:
+        print(f"Error generating dataset: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Failed to generate dataset: {str(e)}"}), 500
+
+@app.route('/download-dataset/<filename>', methods=['GET'])
+def download_dataset(filename):
+    """Download generated dataset file"""
+    try:
+        filepath = f"/tmp/{filename}"
+
+        if not os.path.exists(filepath):
+            return jsonify({"error": "File not found"}), 404
+
+        # Determine mimetype based on file extension
+        if filename.endswith('.csv'):
+            mimetype = 'text/csv'
+        elif filename.endswith('.xlsx'):
+            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        elif filename.endswith('.json'):
+            mimetype = 'application/json'
+        else:
+            mimetype = 'application/octet-stream'
+
+        return send_file(
+            filepath,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mimetype
+        )
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to download file: {str(e)}"}), 500
+
+def generate_synthetic_transactions(n_transactions, n_items, avg_items_per_transaction, distribution_type):
+    """Generate synthetic transaction data using different distributions"""
+
+    # Create item pool (Item_1, Item_2, ..., Item_n)
+    items = [f"Item_{i+1}" for i in range(n_items)]
+
+    transactions = []
+
+    if distribution_type == 'uniform':
+        # Uniform distribution - each item has equal probability
+        for _ in range(n_transactions):
+            # Use Poisson distribution for transaction size around average
+            transaction_size = np.random.poisson(avg_items_per_transaction)
+            transaction_size = max(1, min(transaction_size, n_items))  # Ensure valid size
+
+            # Randomly sample items
+            selected_items = np.random.choice(items, size=transaction_size, replace=False)
+            transactions.append(list(selected_items))
+
+    elif distribution_type == 'normal':
+        # Normal distribution - some items more popular than others
+        # Create popularity weights using normal distribution
+        popularity_weights = np.random.normal(loc=0, scale=1, size=n_items)
+        popularity_weights = np.abs(popularity_weights)  # Make positive
+        popularity_weights = popularity_weights / popularity_weights.sum()  # Normalize
+
+        for _ in range(n_transactions):
+            transaction_size = np.random.poisson(avg_items_per_transaction)
+            transaction_size = max(1, min(transaction_size, n_items))
+
+            # Sample items based on popularity weights
+            selected_items = np.random.choice(items, size=transaction_size, replace=False, p=popularity_weights)
+            transactions.append(list(selected_items))
+
+    elif distribution_type == 'exponential':
+        # Exponential distribution - few very popular items, many rare items
+        popularity_weights = np.random.exponential(scale=1.0, size=n_items)
+        popularity_weights = popularity_weights / popularity_weights.sum()
+
+        for _ in range(n_transactions):
+            transaction_size = np.random.poisson(avg_items_per_transaction)
+            transaction_size = max(1, min(transaction_size, n_items))
+
+            selected_items = np.random.choice(items, size=transaction_size, replace=False, p=popularity_weights)
+            transactions.append(list(selected_items))
+
+    elif distribution_type == 'zipf':
+        # Zipf distribution - power law distribution (few very popular, long tail)
+        # Zipf parameter (s) - higher values mean more skew
+        s = 1.2  # Typical Zipf parameter
+        ranks = np.arange(1, n_items + 1)
+        popularity_weights = 1.0 / (ranks ** s)
+        popularity_weights = popularity_weights / popularity_weights.sum()
+
+        for _ in range(n_transactions):
+            transaction_size = np.random.poisson(avg_items_per_transaction)
+            transaction_size = max(1, min(transaction_size, n_items))
+
+            selected_items = np.random.choice(items, size=transaction_size, replace=False, p=popularity_weights)
+            transactions.append(list(selected_items))
+
+    return transactions
+
 @app.route('/concept-lattice', methods=['POST'])
 def concept_lattice():
     """Generate concept lattice using Formal Concept Analysis"""
