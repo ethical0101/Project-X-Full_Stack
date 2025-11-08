@@ -2,8 +2,8 @@
 
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import toast from 'react-hot-toast';
 import { API_BASE_URL } from '../utils/api';
+import { useError, handleApiError } from '@/contexts/ErrorContext';
 
 interface DataUploadProps {
   onDataProcessed: (data: any) => void;
