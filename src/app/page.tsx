@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import DataUpload from '@/components/DataUpload';
+import DatasetGenerator from '@/components/DatasetGenerator';
 import Dashboard from '@/components/Dashboard';
 import Analytics from '@/components/Analytics';
 import Visualizations from '@/components/Visualizations';
