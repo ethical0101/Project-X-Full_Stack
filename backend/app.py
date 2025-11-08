@@ -24,6 +24,16 @@ current_rules = None
 current_transactions = None
 processing_results = {}
 
+# Processing state for progress tracking
+processing_state = {
+    "is_processing": False,
+    "current_step": "",
+    "progress": 0,
+    "total_steps": 0,
+    "started_at": None,
+    "estimated_completion": None
+}
+
 @app.route('/', methods=['GET'])
 def root():
     """Root endpoint with API documentation"""
