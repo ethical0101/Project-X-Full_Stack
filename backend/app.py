@@ -150,6 +150,40 @@ def upload_data():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+def process_dataframe_to_transactions(df):
+    """Convert DataFrame to list of transactions"""
+    transactions = []
+
+    # Handle different DataFrame formats
+    if 'transaction_id' in df.columns:
+        # Transaction format: one row per transaction
+        item_columns = [col for col in df.columns if col != 'transaction_id']
+        for _, row in df.iterrows():
+            transaction = [str(row[col]) for col in item_columns if pd.notna(row[col]) and str(row[col]).strip()]
+            if transaction:  # Only add non-empty transactions
+                transactions.append(transaction)
+    else:
+        # Item format: one row per item
+        if len(df.columns) >= 2:
+            transaction_col = df.columns[0]
+            item_col = df.columns[1]
+
+            # Group by transaction
+            grouped = df.groupby(transaction_col)[item_col].apply(list)
+            for transaction in grouped:
+                clean_transaction = [str(item).strip() for item in transaction if pd.notna(item) and str(item).strip()]
+                if clean_transaction:
+                    transactions.append(clean_transaction)
+        else:
+            # Single column format - each row is a transaction
+            for _, row in df.iterrows():
+                items = str(row.iloc[0]).split(',') if ',' in str(row.iloc[0]) else [str(row.iloc[0])]
+                clean_items = [item.strip().strip('"\'') for item in items if item.strip()]
+                if clean_items:
+                    transactions.append(clean_items)
+
+    return transactions
+
 @app.route('/mine', methods=['POST'])
 def mine_patterns():
     """Mine frequent patterns and association rules"""
