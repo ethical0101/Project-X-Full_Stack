@@ -8,6 +8,7 @@ import os
 import csv
 from collections import defaultdict, Counter
 import sys
+import pandas as pd
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from fca import build_concept_lattice, lattice_to_json
 
@@ -137,38 +138,179 @@ def upload_file():
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
 
-        # Read the CSV file content
-        file_content = file.read().decode('utf-8')
-        lines = file_content.strip().split('\n')
+        filename = file.filename.lower()
 
-        if not lines or not lines[0].strip():
+        # File extension detection
+        if filename.endswith('.csv'):
+            # Process CSV file (existing logic)
+            return process_csv_file(file)
+        elif filename.endswith('.json'):
+            # Process JSON file (existing logic)
+            return process_json_file(file)
+        elif filename.endswith(('.xlsx', '.xls')):
+            # Process Excel file (new logic)
+            return process_excel_file(file)
+        else:
+            return jsonify({'error': 'Unsupported file format. Please upload a CSV, JSON, or Excel file'}), 400
+
+    except Exception as e:
+        return jsonify({'error': f'Error processing file: {str(e)}'}), 500
+
+def process_csv_file(file):
+    """Process CSV file with structured or simple format detection"""
+    global processed_transactions, original_data
+
+    # Read the CSV file content
+    file_content = file.read().decode('utf-8')
+    lines = file_content.strip().split('\n')
+
+    if not lines or not lines[0].strip():
+        return jsonify({'error': 'Empty file'}), 400
+
+    # Check if this is a simple format (no headers) or structured format (with headers)
+    first_line = lines[0].strip()
+
+    # If first line looks like proper column headers, treat as structured CSV
+    # Must explicitly match expected header patterns
+    first_line_lower = first_line.lower()
+    has_transaction_id_header = ('transaction' in first_line_lower and 'id' in first_line_lower)
+    has_item_header = (first_line_lower.startswith('item') or 'transaction_id,item' in first_line_lower)
+
+    if has_transaction_id_header or has_item_header:
+        # Structured CSV format with headers
+        csv_reader = csv.DictReader(io.StringIO(file_content))
+        data_rows = list(csv_reader)
+
+        if not data_rows:
             return jsonify({'error': 'Empty file'}), 400
 
-        # Check if this is a simple format (no headers) or structured format (with headers)
-        first_line = lines[0].strip()
+        first_row_keys = list(data_rows[0].keys())
 
-        # If first line looks like proper column headers, treat as structured CSV
-        # Must explicitly match expected header patterns
-        first_line_lower = first_line.lower()
-        has_transaction_id_header = ('transaction' in first_line_lower and 'id' in first_line_lower)
-        has_item_header = (first_line_lower.startswith('item') or 'transaction_id,item' in first_line_lower)
+        # Find transaction ID column (flexible naming)
+        transaction_id_col = None
+        items_col = None
+
+        for col in first_row_keys:
+            col_lower = col.lower()
+            if 'transaction' in col_lower and 'id' in col_lower:
+                transaction_id_col = col
+            elif col_lower in ['items', 'item', 'products', 'product']:
+                items_col = col
+
+        if not transaction_id_col or not items_col:
+            return jsonify({
+                'error': f'Missing required columns. Expected: ["TransactionID", "Item"] or similar. Found: {first_row_keys}. If this is a simple CSV (items per line), ensure first line doesn\'t start with "item" or contain "TransactionID".'
+            }), 400
+
+        # Group by TransactionID and create transaction lists
+        transactions_dict = {}
+        for row in data_rows:
+            transaction_id = row[transaction_id_col]
+            items_str = row[items_col]
+
+            # Parse items (handle comma-separated items in quotes)
+            if items_str.startswith('"') and items_str.endswith('"'):
+                items_str = items_str[1:-1]  # Remove quotes
+            items = [item.strip() for item in items_str.split(',')]
+
+            if transaction_id not in transactions_dict:
+                transactions_dict[transaction_id] = []
+            transactions_dict[transaction_id].extend(items)
+
+        transactions = list(transactions_dict.values())
+        original_data = data_rows
+    else:
+        # Simple CSV format (no headers) - each line is a transaction with items
+        transactions = []
+        for line_num, line in enumerate(lines, 1):
+            if line.strip():  # Skip empty lines
+                # Split by comma and clean items
+                items = [item.strip().strip('"') for item in line.split(',')]
+                items = [item for item in items if item]  # Remove empty items
+                if items:  # Only add non-empty transactions
+                    transactions.append(items)
+
+        if not transactions:
+            return jsonify({'error': 'No valid transactions found'}), 400
+
+        # Create dummy original_data for simple format
+        original_data = [{"transaction_id": i, "items": ','.join(transaction)} for i, transaction in enumerate(transactions)]
+
+    processed_transactions = transactions
+    return create_upload_response(transactions)
+
+def process_json_file(file):
+    """Process JSON file with array of arrays or array of objects format"""
+    global processed_transactions, original_data
+
+    file_content = file.read().decode('utf-8')
+    data = json.loads(file_content)
+
+    if isinstance(data, list) and len(data) > 0:
+        if isinstance(data[0], list):
+            # Array of arrays format
+            transactions = data
+            original_data = [{"transaction_id": i, "items": ','.join(transaction)} for i, transaction in enumerate(transactions)]
+        elif isinstance(data[0], dict) and 'items' in data[0]:
+            # Array of objects with items field
+            transactions = [item['items'] for item in data]
+            original_data = data
+        else:
+            return jsonify({'error': 'Invalid JSON format. Expected array of arrays or array of objects with items field'}), 400
+    else:
+        return jsonify({'error': 'Invalid JSON format. Expected non-empty array'}), 400
+
+    if not transactions:
+        return jsonify({'error': 'No valid transactions found'}), 400
+
+    processed_transactions = transactions
+    return create_upload_response(transactions)
+
+def process_excel_file(file):
+    """Process Excel file with structured or simple format detection"""
+    global processed_transactions, original_data
+
+    try:
+        # Determine engine based on file extension
+        filename = file.filename.lower()
+        if filename.endswith('.xlsx'):
+            engine = 'openpyxl'
+        else:  # .xls
+            engine = 'xlrd'
+
+        # Read Excel file into pandas DataFrame
+        df = pd.read_excel(file, engine=engine)
+
+        if df.empty:
+            return jsonify({'error': 'Empty Excel file'}), 400
+
+        # Check if this is structured format (with headers) or simple format
+        first_row_values = df.iloc[0].astype(str).str.lower()
+
+        # Detect structured format by looking for header patterns
+        has_transaction_id_header = any('transaction' in str(val).lower() and 'id' in str(val).lower()
+                                      for val in first_row_values)
+        has_item_header = any(str(val).lower().startswith('item') or
+                            str(val).lower() in ['items', 'product', 'products']
+                            for val in first_row_values)
 
         if has_transaction_id_header or has_item_header:
-            # Structured CSV format with headers
-            csv_reader = csv.DictReader(io.StringIO(file_content))
-            data_rows = list(csv_reader)
+            # Structured Excel format with headers
+            # Use first row as headers
+            df.columns = df.iloc[0]
+            df = df.drop(0).reset_index(drop=True)
 
-            if not data_rows:
-                return jsonify({'error': 'Empty file'}), 400
+            if df.empty:
+                return jsonify({'error': 'Empty Excel file after headers'}), 400
 
-            first_row_keys = list(data_rows[0].keys())
+            column_names = list(df.columns)
 
             # Find transaction ID column (flexible naming)
             transaction_id_col = None
             items_col = None
 
-            for col in first_row_keys:
-                col_lower = col.lower()
+            for col in column_names:
+                col_lower = str(col).lower()
                 if 'transaction' in col_lower and 'id' in col_lower:
                     transaction_id_col = col
                 elif col_lower in ['items', 'item', 'products', 'product']:
@@ -176,69 +318,96 @@ def upload_file():
 
             if not transaction_id_col or not items_col:
                 return jsonify({
-                    'error': f'Missing required columns. Expected: ["TransactionID", "Item"] or similar. Found: {first_row_keys}. If this is a simple CSV (items per line), ensure first line doesn\'t start with "item" or contain "TransactionID".'
+                    'error': f'Missing required columns. Expected: ["TransactionID", "Item"] or similar. Found: {column_names}'
                 }), 400
 
             # Group by TransactionID and create transaction lists
             transactions_dict = {}
-            for row in data_rows:
-                transaction_id = row[transaction_id_col]
-                items_str = row[items_col]
+            data_rows = []
 
-                # Parse items (handle comma-separated items in quotes)
-                if items_str.startswith('"') and items_str.endswith('"'):
-                    items_str = items_str[1:-1]  # Remove quotes
-                items = [item.strip() for item in items_str.split(',')]
+            for index, row in df.iterrows():
+                if pd.isna(row[transaction_id_col]) or pd.isna(row[items_col]):
+                    continue  # Skip rows with missing data
+
+                transaction_id = str(row[transaction_id_col])
+                items_str = str(row[items_col])
+
+                # Parse items (handle comma-separated items)
+                items = [item.strip() for item in items_str.split(',') if item.strip()]
 
                 if transaction_id not in transactions_dict:
                     transactions_dict[transaction_id] = []
                 transactions_dict[transaction_id].extend(items)
 
+                # Store row for original_data
+                data_rows.append({transaction_id_col: transaction_id, items_col: items_str})
+
             transactions = list(transactions_dict.values())
             original_data = data_rows
         else:
-            # Simple CSV format (no headers) - each line is a transaction with items
+            # Simple Excel format (no headers) - each row represents a transaction
             transactions = []
-            for line_num, line in enumerate(lines, 1):
-                if line.strip():  # Skip empty lines
-                    # Split by comma and clean items
-                    items = [item.strip().strip('"') for item in line.split(',')]
-                    items = [item for item in items if item]  # Remove empty items
+            data_rows = []
+
+            for index, row in df.iterrows():
+                # Handle different Excel layouts
+                non_null_values = [str(val).strip() for val in row if pd.notna(val) and str(val).strip()]
+
+                if non_null_values:
+                    # If multiple columns have values, each is an item
+                    # If single column, split by comma like simple CSV
+                    if len(non_null_values) == 1:
+                        # Split single column value by comma
+                        items = [item.strip() for item in non_null_values[0].split(',') if item.strip()]
+                    else:
+                        # Use each non-null column value as an item
+                        items = non_null_values
+
                     if items:  # Only add non-empty transactions
                         transactions.append(items)
+                        data_rows.append({"transaction_id": len(transactions)-1, "items": ','.join(items)})
 
             if not transactions:
                 return jsonify({'error': 'No valid transactions found'}), 400
 
-            # Create dummy original_data for simple format
-            original_data = [{"transaction_id": i, "items": ','.join(transaction)} for i, transaction in enumerate(transactions)]
+            original_data = data_rows
 
         processed_transactions = transactions
-        print(f"=== UPLOAD SUCCESS ===")
-        print(f"Stored {len(transactions)} transactions")
-        print(f"Sample transactions: {transactions[:3]}")
-
-        # Get all unique items
-        all_items = set()
-        for transaction in transactions:
-            all_items.update(transaction)
-
-        # Get basic statistics
-        stats = {
-            'total_transactions': len(transactions),
-            'unique_items': len(all_items),
-            'average_items_per_transaction': sum(len(t) for t in transactions) / len(transactions),
-            'sample_transactions': transactions[:5] if transactions else []
-        }
-
-        return jsonify({
-            'message': 'File uploaded and processed successfully',
-            'stats': stats,
-            'columns': list(all_items)
-        })
+        return create_upload_response(transactions)
 
     except Exception as e:
-        return jsonify({'error': f'Error processing file: {str(e)}'}), 500
+        # Handle specific Excel errors
+        if "corrupted" in str(e).lower():
+            return jsonify({'error': 'Corrupted Excel file'}), 400
+        elif "unsupported format" in str(e).lower():
+            return jsonify({'error': 'Invalid Excel file format'}), 400
+        else:
+            return jsonify({'error': f'Error processing Excel file: {str(e)}'}), 400
+
+def create_upload_response(transactions):
+    """Create standardized response for successful uploads"""
+    print(f"=== UPLOAD SUCCESS ===")
+    print(f"Stored {len(transactions)} transactions")
+    print(f"Sample transactions: {transactions[:3]}")
+
+    # Get all unique items
+    all_items = set()
+    for transaction in transactions:
+        all_items.update(transaction)
+
+    # Get basic statistics
+    stats = {
+        'total_transactions': len(transactions),
+        'unique_items': len(all_items),
+        'average_items_per_transaction': sum(len(t) for t in transactions) / len(transactions),
+        'sample_transactions': transactions[:5] if transactions else []
+    }
+
+    return jsonify({
+        'message': 'File uploaded and processed successfully',
+        'stats': stats,
+        'columns': list(all_items)
+    })
 
 @app.route('/mine', methods=['POST'])
 def mine_patterns():
@@ -465,8 +634,107 @@ def concept_lattice():
                     return jsonify({'error': 'Invalid JSON format. Expected array of arrays or array of objects with items field'}), 400
             else:
                 return jsonify({'error': 'Invalid JSON format. Expected non-empty array'}), 400
+
+        elif filename.endswith(('.xlsx', '.xls')):
+            # Process Excel file for concept lattice
+            try:
+                # Determine engine based on file extension
+                if filename.endswith('.xlsx'):
+                    engine = 'openpyxl'
+                else:  # .xls
+                    engine = 'xlrd'
+
+                # Read Excel file into pandas DataFrame
+                df = pd.read_excel(file, engine=engine)
+
+                if df.empty:
+                    return jsonify({'error': 'Empty Excel file'}), 400
+
+                # Check if this is structured format (with headers) or simple format
+                first_row_values = df.iloc[0].astype(str).str.lower()
+
+                # Detect structured format by looking for header patterns
+                has_transaction_id_header = any('transaction' in str(val).lower() and 'id' in str(val).lower()
+                                              for val in first_row_values)
+                has_item_header = any(str(val).lower().startswith('item') or
+                                    str(val).lower() in ['items', 'product', 'products']
+                                    for val in first_row_values)
+
+                if has_transaction_id_header or has_item_header:
+                    # Structured Excel format with headers
+                    # Use first row as headers
+                    df.columns = df.iloc[0]
+                    df = df.drop(0).reset_index(drop=True)
+
+                    if df.empty:
+                        return jsonify({'error': 'Empty Excel file after headers'}), 400
+
+                    column_names = list(df.columns)
+
+                    # Find transaction ID column (flexible naming)
+                    transaction_id_col = None
+                    items_col = None
+
+                    for col in column_names:
+                        col_lower = str(col).lower()
+                        if 'transaction' in col_lower and 'id' in col_lower:
+                            transaction_id_col = col
+                        elif col_lower in ['items', 'item', 'products', 'product']:
+                            items_col = col
+
+                    if not transaction_id_col or not items_col:
+                        return jsonify({
+                            'error': f'Missing required columns. Expected: ["TransactionID", "Item"] or similar. Found: {column_names}'
+                        }), 400
+
+                    # Group by TransactionID and create transaction lists
+                    transactions_dict = {}
+
+                    for index, row in df.iterrows():
+                        if pd.isna(row[transaction_id_col]) or pd.isna(row[items_col]):
+                            continue  # Skip rows with missing data
+
+                        transaction_id = str(row[transaction_id_col])
+                        items_str = str(row[items_col])
+
+                        # Parse items (handle comma-separated items)
+                        items = [item.strip() for item in items_str.split(',') if item.strip()]
+
+                        if transaction_id not in transactions_dict:
+                            transactions_dict[transaction_id] = []
+                        transactions_dict[transaction_id].extend(items)
+
+                    transactions = list(transactions_dict.values())
+                else:
+                    # Simple Excel format (no headers) - each row represents a transaction
+                    transactions = []
+
+                    for index, row in df.iterrows():
+                        # Handle different Excel layouts
+                        non_null_values = [str(val).strip() for val in row if pd.notna(val) and str(val).strip()]
+
+                        if non_null_values:
+                            # If multiple columns have values, each is an item
+                            # If single column, split by comma like simple CSV
+                            if len(non_null_values) == 1:
+                                # Split single column value by comma
+                                items = [item.strip() for item in non_null_values[0].split(',') if item.strip()]
+                            else:
+                                # Use each non-null column value as an item
+                                items = non_null_values
+
+                            if items:  # Only add non-empty transactions
+                                transactions.append(items)
+
+            except Exception as e:
+                if "corrupted" in str(e).lower():
+                    return jsonify({'error': 'Corrupted Excel file'}), 400
+                elif "unsupported format" in str(e).lower():
+                    return jsonify({'error': 'Invalid Excel file format'}), 400
+                else:
+                    return jsonify({'error': f'Error processing Excel file: {str(e)}'}), 400
         else:
-            return jsonify({'error': 'Unsupported file format. Please upload a CSV or JSON file'}), 400
+            return jsonify({'error': 'Unsupported file format. Please upload a CSV, JSON, or Excel file'}), 400
 
         if not transactions:
             return jsonify({'error': 'No valid transactions found in the file'}), 400
