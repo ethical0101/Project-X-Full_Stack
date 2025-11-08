@@ -281,6 +281,8 @@ def mine_patterns():
         start_time = time.time()
         if algorithm == 'apriori':
             frequent_itemsets = apriori(df_encoded, min_support=min_support, use_colnames=True)
+        elif algorithm == 'eclat':
+            frequent_itemsets = eclat(df_encoded, min_support=min_support, use_colnames=True)
         else:  # fpgrowth
             frequent_itemsets = fpgrowth(df_encoded, min_support=min_support, use_colnames=True)
 
