@@ -148,7 +148,7 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
               Drag and drop a transaction file here, or click to select
             </p>
             <p className="text-sm text-gray-500">
-              Supports JSON and CSV files
+              Supports JSON, CSV, and Excel files
             </p>
           </div>
         )}
