@@ -634,8 +634,107 @@ def concept_lattice():
                     return jsonify({'error': 'Invalid JSON format. Expected array of arrays or array of objects with items field'}), 400
             else:
                 return jsonify({'error': 'Invalid JSON format. Expected non-empty array'}), 400
+
+        elif filename.endswith(('.xlsx', '.xls')):
+            # Process Excel file for concept lattice
+            try:
+                # Determine engine based on file extension
+                if filename.endswith('.xlsx'):
+                    engine = 'openpyxl'
+                else:  # .xls
+                    engine = 'xlrd'
+
+                # Read Excel file into pandas DataFrame
+                df = pd.read_excel(file, engine=engine)
+
+                if df.empty:
+                    return jsonify({'error': 'Empty Excel file'}), 400
+
+                # Check if this is structured format (with headers) or simple format
+                first_row_values = df.iloc[0].astype(str).str.lower()
+
+                # Detect structured format by looking for header patterns
+                has_transaction_id_header = any('transaction' in str(val).lower() and 'id' in str(val).lower()
+                                              for val in first_row_values)
+                has_item_header = any(str(val).lower().startswith('item') or
+                                    str(val).lower() in ['items', 'product', 'products']
+                                    for val in first_row_values)
+
+                if has_transaction_id_header or has_item_header:
+                    # Structured Excel format with headers
+                    # Use first row as headers
+                    df.columns = df.iloc[0]
+                    df = df.drop(0).reset_index(drop=True)
+
+                    if df.empty:
+                        return jsonify({'error': 'Empty Excel file after headers'}), 400
+
+                    column_names = list(df.columns)
+
+                    # Find transaction ID column (flexible naming)
+                    transaction_id_col = None
+                    items_col = None
+
+                    for col in column_names:
+                        col_lower = str(col).lower()
+                        if 'transaction' in col_lower and 'id' in col_lower:
+                            transaction_id_col = col
+                        elif col_lower in ['items', 'item', 'products', 'product']:
+                            items_col = col
+
+                    if not transaction_id_col or not items_col:
+                        return jsonify({
+                            'error': f'Missing required columns. Expected: ["TransactionID", "Item"] or similar. Found: {column_names}'
+                        }), 400
+
+                    # Group by TransactionID and create transaction lists
+                    transactions_dict = {}
+
+                    for index, row in df.iterrows():
+                        if pd.isna(row[transaction_id_col]) or pd.isna(row[items_col]):
+                            continue  # Skip rows with missing data
+
+                        transaction_id = str(row[transaction_id_col])
+                        items_str = str(row[items_col])
+
+                        # Parse items (handle comma-separated items)
+                        items = [item.strip() for item in items_str.split(',') if item.strip()]
+
+                        if transaction_id not in transactions_dict:
+                            transactions_dict[transaction_id] = []
+                        transactions_dict[transaction_id].extend(items)
+
+                    transactions = list(transactions_dict.values())
+                else:
+                    # Simple Excel format (no headers) - each row represents a transaction
+                    transactions = []
+
+                    for index, row in df.iterrows():
+                        # Handle different Excel layouts
+                        non_null_values = [str(val).strip() for val in row if pd.notna(val) and str(val).strip()]
+
+                        if non_null_values:
+                            # If multiple columns have values, each is an item
+                            # If single column, split by comma like simple CSV
+                            if len(non_null_values) == 1:
+                                # Split single column value by comma
+                                items = [item.strip() for item in non_null_values[0].split(',') if item.strip()]
+                            else:
+                                # Use each non-null column value as an item
+                                items = non_null_values
+
+                            if items:  # Only add non-empty transactions
+                                transactions.append(items)
+
+            except Exception as e:
+                if "corrupted" in str(e).lower():
+                    return jsonify({'error': 'Corrupted Excel file'}), 400
+                elif "unsupported format" in str(e).lower():
+                    return jsonify({'error': 'Invalid Excel file format'}), 400
+                else:
+                    return jsonify({'error': f'Error processing Excel file: {str(e)}'}), 400
         else:
-            return jsonify({'error': 'Unsupported file format. Please upload a CSV or JSON file'}), 400
+            return jsonify({'error': 'Unsupported file format. Please upload a CSV, JSON, or Excel file'}), 400
 
         if not transactions:
             return jsonify({'error': 'No valid transactions found in the file'}), 400
