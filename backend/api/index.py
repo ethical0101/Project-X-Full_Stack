@@ -8,6 +8,7 @@ import os
 import csv
 from collections import defaultdict, Counter
 import sys
+import pandas as pd
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from fca import build_concept_lattice, lattice_to_json
 
