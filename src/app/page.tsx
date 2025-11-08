@@ -10,7 +10,7 @@ import ConceptLatticeAnalysis from '@/components/ConceptLatticeAnalysis';
 import ProgressIndicator from '@/components/ProgressIndicator';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'upload' | 'dashboard' | 'analytics' | 'visualizations' | 'lattice'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'generator' | 'dashboard' | 'analytics' | 'visualizations' | 'lattice'>('upload');
   const [data, setData] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
