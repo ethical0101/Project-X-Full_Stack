@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import pandas as pd
 from mlxtend.frequent_patterns import apriori, fpgrowth, eclat, association_rules
