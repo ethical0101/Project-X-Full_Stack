@@ -10,28 +10,8 @@ from collections import defaultdict, Counter
 
 app = Flask(__name__)
 
-# Configure CORS for production
-cors_origins = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://localhost:3001,https://project-x-full-stack.vercel.app').split(',')
+# Configure CORS - simplified to avoid duplicate headers
 CORS(app, origins=['*'], methods=['GET', 'POST', 'OPTIONS'], allow_headers=['Content-Type', 'Authorization', 'Accept'])
-
-# Add explicit CORS headers to all responses
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
-
-# Add explicit OPTIONS handler for preflight requests
-@app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
-        response = jsonify({})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add('Access-Control-Allow-Headers', "*")
-        response.headers.add('Access-Control-Allow-Methods', "*")
-        return response
 
 # Global variables to store processed data
 processed_transactions = None
@@ -141,10 +121,7 @@ def home():
 def health():
     return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
 
-# Explicit OPTIONS handler for all routes
-@app.route('/<path:path>', methods=['OPTIONS'])
-def handle_options(path):
-    return jsonify({}), 200
+# Flask-CORS handles OPTIONS requests automatically
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -158,35 +135,77 @@ def upload_file():
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
 
-        # Read the CSV file manually
+        # Read the CSV file content
         file_content = file.read().decode('utf-8')
-        csv_reader = csv.DictReader(io.StringIO(file_content))
+        lines = file_content.strip().split('\n')
 
-        # Store original data as list of dictionaries
-        data_rows = list(csv_reader)
-        original_data = data_rows
-
-        # Validate required columns
-        required_columns = ['TransactionID', 'Item']
-        if not data_rows:
+        if not lines or not lines[0].strip():
             return jsonify({'error': 'Empty file'}), 400
 
-        first_row_keys = set(data_rows[0].keys())
-        if not all(col in first_row_keys for col in required_columns):
-            return jsonify({
-                'error': f'Missing required columns. Expected: {required_columns}, Found: {list(first_row_keys)}'
-            }), 400
+        # Check if this is a simple format (no headers) or structured format (with headers)
+        first_line = lines[0].strip()
 
-        # Group by TransactionID and create transaction lists
-        transactions_dict = {}
-        for row in data_rows:
-            transaction_id = row['TransactionID']
-            item = row['Item']
-            if transaction_id not in transactions_dict:
-                transactions_dict[transaction_id] = []
-            transactions_dict[transaction_id].append(item)
+        # If first line looks like column names, treat as structured CSV
+        if ('transaction' in first_line.lower() and 'id' in first_line.lower()) or \
+           ('item' in first_line.lower() and ',' in first_line):
+            # Structured CSV format with headers
+            csv_reader = csv.DictReader(io.StringIO(file_content))
+            data_rows = list(csv_reader)
 
-        transactions = list(transactions_dict.values())
+            if not data_rows:
+                return jsonify({'error': 'Empty file'}), 400
+
+            first_row_keys = list(data_rows[0].keys())
+
+            # Find transaction ID column (flexible naming)
+            transaction_id_col = None
+            items_col = None
+
+            for col in first_row_keys:
+                col_lower = col.lower()
+                if 'transaction' in col_lower and 'id' in col_lower:
+                    transaction_id_col = col
+                elif col_lower in ['items', 'item', 'products', 'product']:
+                    items_col = col
+
+            if not transaction_id_col or not items_col:
+                return jsonify({
+                    'error': f'Missing required columns. Expected: transaction ID column and items column. Found: {first_row_keys}'
+                }), 400
+
+            # Group by TransactionID and create transaction lists
+            transactions_dict = {}
+            for row in data_rows:
+                transaction_id = row[transaction_id_col]
+                items_str = row[items_col]
+
+                # Parse items (handle comma-separated items in quotes)
+                if items_str.startswith('"') and items_str.endswith('"'):
+                    items_str = items_str[1:-1]  # Remove quotes
+                items = [item.strip() for item in items_str.split(',')]
+
+                if transaction_id not in transactions_dict:
+                    transactions_dict[transaction_id] = []
+                transactions_dict[transaction_id].extend(items)
+
+            transactions = list(transactions_dict.values())
+            original_data = data_rows
+        else:
+            # Simple CSV format (no headers) - each line is a transaction with items
+            transactions = []
+            for line_num, line in enumerate(lines, 1):
+                if line.strip():  # Skip empty lines
+                    # Split by comma and clean items
+                    items = [item.strip().strip('"') for item in line.split(',')]
+                    items = [item for item in items if item]  # Remove empty items
+                    if items:  # Only add non-empty transactions
+                        transactions.append(items)
+
+            if not transactions:
+                return jsonify({'error': 'No valid transactions found'}), 400
+
+            # Create dummy original_data for simple format
+            original_data = [{"transaction_id": i, "items": ','.join(transaction)} for i, transaction in enumerate(transactions)]
         processed_transactions = transactions
 
         # Get all unique items
@@ -372,3 +391,7 @@ def get_analytics():
 
     except Exception as e:
         return jsonify({'error': f'Error generating analytics: {str(e)}'}), 500
+
+# For local development
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)

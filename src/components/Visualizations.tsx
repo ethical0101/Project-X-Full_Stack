@@ -38,7 +38,11 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D'
 export default function Visualizations({ data }: VisualizationsProps) {
   const [selectedVisualization, setSelectedVisualization] = useState('support-lift');
 
-  if (!data || !data.itemsets || !data.rules) {
+  console.log('Visualizations received data:', data);
+  console.log('Frequent itemsets:', data?.frequent_itemsets);
+  console.log('Association rules:', data?.association_rules);
+
+  if (!data || !data.frequent_itemsets || !data.association_rules) {
     return (
       <div className="p-8 text-center">
         <div className="text-gray-400 mb-4">
@@ -56,7 +60,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
   // === DATA PROCESSING FOR ALL VISUALIZATIONS ===
 
   // 1. Support vs Lift Scatter Plot Data
-  const supportLiftData = data.rules?.map((rule: any, index: number) => ({
+  const supportLiftData = data.association_rules?.map((rule: any, index: number) => ({
     support: (rule.support || 0) * 100,
     lift: rule.lift || 0,
     confidence: (rule.confidence || 0) * 100,
@@ -66,7 +70,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
 
   // 2. Item Frequency Data
   const itemFrequencies: { [key: string]: number } = {};
-  data.itemsets?.forEach((itemset: any) => {
+  data.frequent_itemsets?.forEach((itemset: any) => {
     const items = Array.isArray(itemset.itemset) ? itemset.itemset : [itemset.itemset];
     items.forEach((item: string) => {
       itemFrequencies[item] = Math.max(itemFrequencies[item] || 0, itemset.support || 0);
@@ -80,7 +84,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
 
   // 3. Confidence Distribution
   const confidenceHistogram: { [key: string]: number } = {};
-  data.rules?.forEach((rule: any) => {
+  data.association_rules?.forEach((rule: any) => {
     const confBin = Math.floor((rule.confidence || 0) * 10) * 10;
     const binLabel = `${confBin}-${confBin + 9}%`;
     confidenceHistogram[binLabel] = (confidenceHistogram[binLabel] || 0) + 1;
@@ -92,7 +96,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
 
   // 4. Itemset Length Distribution
   const itemsetLengthData: { [key: number]: number } = {};
-  data.itemsets?.forEach((itemset: any) => {
+  data.frequent_itemsets?.forEach((itemset: any) => {
     const length = Array.isArray(itemset.itemset) ? itemset.itemset.length : 1;
     itemsetLengthData[length] = (itemsetLengthData[length] || 0) + 1;
   });
@@ -105,16 +109,16 @@ export default function Visualizations({ data }: VisualizationsProps) {
 
   // 5. Quality Metrics Radar
   const calculateAverage = (field: string) => {
-    if (!data.rules?.length) return 0;
-    const sum = data.rules.reduce((acc: number, rule: any) => acc + (rule[field] || 0), 0);
-    return sum / data.rules.length;
+    if (!data.association_rules?.length) return 0;
+    const sum = data.association_rules.reduce((acc: number, rule: any) => acc + (rule[field] || 0), 0);
+    return sum / data.association_rules.length;
   };
 
   const radarData = [
     { metric: 'Avg Support', value: calculateAverage('support') * 100, fullMark: 100 },
     { metric: 'Avg Confidence', value: calculateAverage('confidence') * 100, fullMark: 100 },
     { metric: 'Avg Lift', value: Math.min(calculateAverage('lift') * 20, 100), fullMark: 100 },
-    { metric: 'Rule Count', value: Math.min((data.rules?.length || 0) / 20 * 100, 100), fullMark: 100 },
+    { metric: 'Rule Count', value: Math.min((data.association_rules?.length || 0) / 20 * 100, 100), fullMark: 100 },
     { metric: 'Item Diversity', value: Math.min(Object.keys(itemFrequencies).length / 50 * 100, 100), fullMark: 100 }
   ];
 
@@ -122,7 +126,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
   const antecedentFreq: { [key: string]: number } = {};
   const consequentFreq: { [key: string]: number } = {};
 
-  data.rules?.forEach((rule: any) => {
+  data.association_rules?.forEach((rule: any) => {
     const antecedents = Array.isArray(rule.antecedents) ? rule.antecedents : [rule.antecedents];
     const consequents = Array.isArray(rule.consequents) ? rule.consequents : [rule.consequents];
 
@@ -146,7 +150,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
     .map(([name, count]) => ({ name, count, frequency: count }));
 
   // 7. Treemap Data for Confidence
-  const treemapData = data.rules?.slice(0, 20).map((rule: any, index: number) => ({
+  const treemapData = data.association_rules?.slice(0, 20).map((rule: any, index: number) => ({
     name: `R${index + 1}`,
     size: Math.max((rule.confidence || 0) * 1000, 1),
     confidence: ((rule.confidence || 0) * 100).toFixed(1),
@@ -156,7 +160,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
   })) || [];
 
   // 8. Support vs Confidence Scatter
-  const supportConfidenceData = data.rules?.map((rule: any, index: number) => ({
+  const supportConfidenceData = data.association_rules?.map((rule: any, index: number) => ({
     support: (rule.support || 0) * 100,
     confidence: (rule.confidence || 0) * 100,
     lift: rule.lift || 0,
@@ -165,7 +169,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
   })) || [];
 
   // 9. Bubble Chart Data (3D visualization)
-  const bubbleData = data.rules?.slice(0, 30).map((rule: any, index: number) => ({
+  const bubbleData = data.association_rules?.slice(0, 30).map((rule: any, index: number) => ({
     x: (rule.support || 0) * 100,
     y: (rule.confidence || 0) * 100,
     z: Math.max((rule.lift || 1) * 10, 5),
@@ -174,7 +178,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
   })) || [];
 
   // 10. Parallel Coordinates Data
-  const parallelData = data.rules?.slice(0, 50).map((rule: any, index: number) => ({
+  const parallelData = data.association_rules?.slice(0, 50).map((rule: any, index: number) => ({
     rule: `R${index + 1}`,
     support: (rule.support || 0) * 100,
     confidence: (rule.confidence || 0) * 100,
@@ -188,7 +192,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
   for (let i = 0; i < topItems.length; i++) {
     for (let j = 0; j < topItems.length; j++) {
       if (i !== j) {
-        const rule = data.rules?.find((r: any) => {
+        const rule = data.association_rules?.find((r: any) => {
           const antecedents = Array.isArray(r.antecedents) ? r.antecedents : [r.antecedents];
           const consequents = Array.isArray(r.consequents) ? r.consequents : [r.consequents];
           return antecedents.includes(topItems[i]) && consequents.includes(topItems[j]);
@@ -502,11 +506,11 @@ export default function Visualizations({ data }: VisualizationsProps) {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow">
           <div className="text-sm opacity-90">Total Rules</div>
-          <div className="text-2xl font-bold">{data.rules?.length || 0}</div>
+          <div className="text-2xl font-bold">{data.association_rules?.length || 0}</div>
         </div>
         <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-4 rounded-lg shadow">
           <div className="text-sm opacity-90">Frequent Itemsets</div>
-          <div className="text-2xl font-bold">{data.itemsets?.length || 0}</div>
+          <div className="text-2xl font-bold">{data.frequent_itemsets?.length || 0}</div>
         </div>
         <div className="bg-gradient-to-r from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow">
           <div className="text-sm opacity-90">Unique Items</div>

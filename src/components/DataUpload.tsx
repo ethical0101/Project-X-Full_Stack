@@ -88,9 +88,9 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
           unique_items: uploadResult.stats?.unique_items || 0,
           avg_items: uploadResult.stats?.avg_items_per_transaction || 0,
         },
-        frequent_itemsets: miningResult.itemsets || [],
-        association_rules: miningResult.rules || [], // Fix: map 'rules' to 'association_rules'
-        rules: miningResult.rules || [], // Keep both for compatibility
+        frequent_itemsets: miningResult.frequent_itemsets || [],
+        association_rules: miningResult.association_rules || [], // Backend returns association_rules
+        rules: miningResult.association_rules || [], // Keep both for compatibility
         performance: miningResult.performance || {},
         quality_metrics: miningResult.quality_metrics || {}
       };

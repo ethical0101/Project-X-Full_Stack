@@ -32,22 +32,22 @@ def root():
         "version": "1.0.0",
         "status": "running",
         "endpoints": {
-            "health": "/api/health - GET - Health check",
-            "upload": "/api/upload - POST - Upload transaction data",
-            "mine": "/api/mine - POST - Mine frequent patterns",
-            "analytics": "/api/analytics - GET - Get analytics data",
-            "results": "/api/results - GET - Get mining results"
+            "health": "/health - GET - Health check",
+            "upload": "/upload - POST - Upload transaction data",
+            "mine": "/mine - POST - Mine frequent patterns",
+            "analytics": "/analytics - GET - Get analytics data",
+            "results": "/results - GET - Get mining results"
         },
         "frontend": "http://localhost:3000",
         "timestamp": datetime.now().isoformat()
     })
 
-@app.route('/api/health', methods=['GET'])
+@app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
 
-@app.route('/api/upload', methods=['POST'])
+@app.route('/upload', methods=['POST'])
 def upload_data():
     """Upload and process transaction data"""
     global current_data, current_itemsets, current_rules, current_transactions, processing_results
@@ -150,7 +150,7 @@ def upload_data():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/mine', methods=['POST'])
+@app.route('/mine', methods=['POST'])
 def mine_patterns():
     """Mine frequent patterns and association rules"""
     global current_data, current_itemsets, current_rules, current_transactions, processing_results
@@ -298,7 +298,7 @@ def mine_patterns():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/analytics', methods=['GET'])
+@app.route('/analytics', methods=['GET'])
 def get_analytics():
     """Get advanced analytics and metrics"""
     global processing_results, current_data, current_transactions
@@ -348,7 +348,7 @@ def get_analytics():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/results', methods=['GET'])
+@app.route('/results', methods=['GET'])
 def get_results():
     """Get the latest mining results"""
     global processing_results
@@ -358,7 +358,7 @@ def get_results():
 
     return jsonify(processing_results)
 
-@app.route('/api/test-upload-and-mine', methods=['POST'])
+@app.route('/test-upload-and-mine', methods=['POST'])
 def test_upload_and_mine():
     """Test the complete upload and mining flow"""
     global current_data, current_itemsets, current_rules, processing_results
@@ -439,7 +439,7 @@ def test_upload_and_mine():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/test-mining', methods=['GET'])
+@app.route('/test-mining', methods=['GET'])
 def test_mining():
     """Test endpoint to verify mining works with super_patterns.json"""
     try:
@@ -479,7 +479,7 @@ def test_mining():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route('/api/debug', methods=['GET'])
+@app.route('/debug', methods=['GET'])
 def debug_data():
     """Debug endpoint to check current data state"""
     global current_data, current_itemsets, current_rules, processing_results
@@ -498,7 +498,7 @@ def debug_data():
 
     return jsonify(debug_info)
 
-@app.route('/api/concept-lattice', methods=['POST'])
+@app.route('/concept-lattice', methods=['POST'])
 def concept_lattice():
     """Generate concept lattice using Formal Concept Analysis"""
     try:
@@ -581,7 +581,7 @@ def concept_lattice():
         traceback.print_exc()
         return jsonify({'error': f'Error generating concept lattice: {str(e)}'}), 500
 
-@app.route('/api/test-lattice', methods=['GET'])
+@app.route('/test-lattice', methods=['GET'])
 def test_lattice():
     """Test concept lattice generation with sample data"""
     try:
