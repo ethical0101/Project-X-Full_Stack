@@ -16,14 +16,49 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
   const [minSupport, setMinSupport] = useState(0.05);
   const [minConfidence, setMinConfidence] = useState(0.3);
   const [algorithm, setAlgorithm] = useState<'apriori' | 'fpgrowth' | 'eclat'>('apriori');
+  const { handleError, handleSuccess, handleInfo } = useError();
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const validateFile = (file: File): string | null => {
+    // Check file size (max 50MB)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (file.size > maxSize) {
+      return 'File size exceeds 50MB limit';
+    }
+
+    // Check file extension
+    const allowedExtensions = ['.csv', '.json', '.xlsx', '.xls'];
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+    if (!allowedExtensions.includes(fileExtension)) {
+      return 'Invalid file format. Please upload CSV, JSON, or Excel files';
+    }
+
+    return null;
+  };
+
+  const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
+    // Handle rejected files
+    if (rejectedFiles.length > 0) {
+      const rejection = rejectedFiles[0];
+      if (rejection.errors.some((error: any) => error.code === 'file-invalid-type')) {
+        handleError('Invalid file type. Please upload CSV, JSON, or Excel files');
+      } else if (rejection.errors.some((error: any) => error.code === 'file-too-large')) {
+        handleError('File too large. Maximum file size is 50MB');
+      }
+      return;
+    }
+
     const file = acceptedFiles[0];
     if (file) {
+      const validationError = validateFile(file);
+      if (validationError) {
+        handleError(validationError);
+        return;
+      }
+
       setUploadedFile(file);
-      toast.success('File uploaded successfully!');
+      handleSuccess(`File "${file.name}" uploaded successfully!`);
     }
-  }, []);
+  }, [handleError, handleSuccess]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
