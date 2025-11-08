@@ -1,5 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { API_BASE_URL } from '../utils/api';
+import dynamic from 'next/dynamic';
+
+// Import react-force-graph-2d dynamically to avoid SSR issues
+const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
 interface ConceptNode {
   id: number;
@@ -37,13 +41,30 @@ interface LatticeResponse {
   message: string;
 }
 
+interface GraphNode {
+  id: string;
+  name: string;
+  group: number;
+  data: ConceptNode;
+  x?: number;
+  y?: number;
+}
+
+interface GraphLink {
+  source: string;
+  target: string;
+  value: number;
+}
+
 const ConceptLatticeAnalysis: React.FC = () => {
   const [latticeData, setLatticeData] = useState<ConceptLattice | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<ConceptNode | null>(null);
   const [processingTime, setProcessingTime] = useState<number>(0);
-  const [viewMode, setViewMode] = useState<'network' | 'hesse'>('hesse');
+  const [viewMode, setViewMode] = useState<'force' | 'hesse'>('force');
+  const [hoveredNode, setHoveredNode] = useState<ConceptNode | null>(null);
+  const fgRef = useRef<any>();
 
   const triggerFileUpload = () => {
     const fileInput = document.getElementById('lattice-file-upload') as HTMLInputElement;
@@ -123,6 +144,77 @@ const ConceptLatticeAnalysis: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  // Transform lattice data for force graph
+  const graphData = useMemo(() => {
+    if (!latticeData) return { nodes: [], links: [] };
+
+    const nodes: GraphNode[] = latticeData.nodes.map(node => ({
+      id: node.id.toString(),
+      name: node.label,
+      group: node.is_top ? 3 : node.is_bottom ? 2 : 1,
+      data: node,
+    }));
+
+    const links: GraphLink[] = latticeData.edges.map(edge => ({
+      source: edge.source.toString(),
+      target: edge.target.toString(),
+      value: 1,
+    }));
+
+    return { nodes, links };
+  }, [latticeData]);
+
+  // Handle node click in force graph
+  const handleNodeClick = useCallback((node: any) => {
+    setSelectedNode(node.data);
+  }, []);
+
+  // Handle node hover in force graph
+  const handleNodeHover = useCallback((node: any | null) => {
+    setHoveredNode(node?.data || null);
+  }, []);
+
+  // Custom node painting for force graph
+  const handleNodeCanvasObject = useCallback((node: any, ctx: any, globalScale: number) => {
+    const label = node.name;
+    const fontSize = 12 / globalScale;
+    ctx.font = `${fontSize}px Sans-Serif`;
+    const textWidth = ctx.measureText(label).width;
+    const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2);
+
+    // Choose color based on node type
+    let color = '#3b82f6'; // Default blue
+    if (node.data.is_top) color = '#ef4444'; // Red for top
+    else if (node.data.is_bottom) color = '#22c55e'; // Green for bottom
+
+    // Draw circle background
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, 4, 0, 2 * Math.PI, false);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    // Draw label background
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fillRect(
+      node.x - bckgDimensions[0] / 2,
+      node.y - bckgDimensions[1] / 2,
+      ...bckgDimensions
+    );
+
+    // Draw text
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#1f2937';
+    ctx.fillText(label, node.x, node.y);
+  }, []);
+
+  // Zoom to fit and center
+  const handleZoomToFit = useCallback(() => {
+    if (fgRef.current) {
+      fgRef.current.zoomToFit(400);
+    }
+  }, []);
+
   // Enhanced Hesse diagram layout
   const calculateHesseLayout = (nodes: ConceptNode[], edges: ConceptEdge[]) => {
     const positions: { [key: number]: { x: number; y: number; level: number } } = {};
@@ -195,46 +287,22 @@ const ConceptLatticeAnalysis: React.FC = () => {
     return positions;
   };
 
-  // Network layout (circular)
-  const calculateNetworkLayout = (nodes: ConceptNode[]) => {
-    const positions: { [key: number]: { x: number; y: number; level: number } } = {};
-    const centerX = 400;
-    const centerY = 300;
-    const radius = 200;
-
-    nodes.forEach((node, index) => {
-      const angle = (2 * Math.PI * index) / nodes.length;
-      positions[node.id] = {
-        x: centerX + radius * Math.cos(angle),
-        y: centerY + radius * Math.sin(angle),
-        level: 0
-      };
-    });
-
-    return positions;
-  };
-
-  const renderLatticeVisualization = () => {
+  const renderHesseDiagram = () => {
     if (!latticeData) return null;
 
     const { nodes, edges } = latticeData;
     const svgWidth = 800;
     const svgHeight = 600;
 
-    // Choose layout based on view mode
-    const nodePositions = viewMode === 'hesse'
-      ? calculateHesseLayout(nodes, edges)
-      : calculateNetworkLayout(nodes);
+    const nodePositions = calculateHesseLayout(nodes, edges);
 
     return (
       <div className="w-full overflow-x-auto">
         <svg width={svgWidth} height={svgHeight} className="border border-gray-300 rounded bg-white">
           <defs>
-            {viewMode === 'hesse' && (
-              <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#f0f0f0" strokeWidth="1"/>
-              </pattern>
-            )}
+            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#f0f0f0" strokeWidth="1"/>
+            </pattern>
             <marker
               id="arrowhead"
               markerWidth="10"
@@ -250,9 +318,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
             </marker>
           </defs>
 
-          {viewMode === 'hesse' && (
-            <rect width="100%" height="100%" fill="url(#grid)" />
-          )}
+          <rect width="100%" height="100%" fill="url(#grid)" />
 
           {/* Render edges */}
           {edges.map((edge, index) => {
@@ -280,6 +346,7 @@ const ConceptLatticeAnalysis: React.FC = () => {
             if (!pos) return null;
 
             const isSelected = selectedNode?.id === node.id;
+            const isHovered = hoveredNode?.id === node.id;
             const nodeColor = node.is_top
               ? '#ef4444'
               : node.is_bottom
@@ -291,12 +358,14 @@ const ConceptLatticeAnalysis: React.FC = () => {
                 <circle
                   cx={pos.x}
                   cy={pos.y}
-                  r={isSelected ? 20 : 15}
+                  r={isHovered ? 18 : isSelected ? 16 : 14}
                   fill={nodeColor}
                   stroke={isSelected ? '#1f2937' : '#ffffff'}
                   strokeWidth={isSelected ? 3 : 2}
-                  className="cursor-pointer"
+                  className="cursor-pointer transition-all"
                   onClick={() => setSelectedNode(node)}
+                  onMouseEnter={() => setHoveredNode(node)}
+                  onMouseLeave={() => setHoveredNode(null)}
                 />
                 <text
                   x={pos.x}
@@ -340,30 +409,26 @@ const ConceptLatticeAnalysis: React.FC = () => {
           })}
 
           {/* Level labels for Hesse diagram */}
-          {viewMode === 'hesse' && (
-            <>
-              {Object.entries(
-                nodes.reduce((levels: {[key: number]: number}, node) => {
-                  const pos = nodePositions[node.id];
-                  if (pos && !levels[pos.level]) {
-                    levels[pos.level] = pos.y;
-                  }
-                  return levels;
-                }, {})
-              ).map(([level, y]) => (
-                <text
-                  key={level}
-                  x={20}
-                  y={y + 5}
-                  fontSize="12"
-                  fill="#666"
-                  fontWeight="bold"
-                >
-                  L{level}
-                </text>
-              ))}
-            </>
-          )}
+          {Object.entries(
+            nodes.reduce((levels: {[key: number]: number}, node) => {
+              const pos = nodePositions[node.id];
+              if (pos && !levels[pos.level]) {
+                levels[pos.level] = pos.y;
+              }
+              return levels;
+            }, {})
+          ).map(([level, y]) => (
+            <text
+              key={level}
+              x={20}
+              y={y + 5}
+              fontSize="12"
+              fill="#666"
+              fontWeight="bold"
+            >
+              L{level}
+            </text>
+          ))}
         </svg>
       </div>
     );
@@ -382,6 +447,16 @@ const ConceptLatticeAnalysis: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-700">View:</span>
             <button
+              onClick={() => setViewMode('force')}
+              className={`px-3 py-1 text-sm rounded ${
+                viewMode === 'force'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              🌐 Force Graph
+            </button>
+            <button
               onClick={() => setViewMode('hesse')}
               className={`px-3 py-1 text-sm rounded ${
                 viewMode === 'hesse'
@@ -391,22 +466,12 @@ const ConceptLatticeAnalysis: React.FC = () => {
             >
               📊 Hesse Diagram
             </button>
-            <button
-              onClick={() => setViewMode('network')}
-              className={`px-3 py-1 text-sm rounded ${
-                viewMode === 'network'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
-            >
-              🕸️ Network View
-            </button>
           </div>
 
           <div className="flex items-center gap-2">
             <input
               type="file"
-              accept=".csv,.json"
+              accept=".csv,.json,.xlsx,.xls"
               onChange={handleFileUpload}
               className="hidden"
               id="lattice-file-upload"
@@ -428,6 +493,15 @@ const ConceptLatticeAnalysis: React.FC = () => {
           >
             🕸️ Load Test Lattice
           </button>
+
+          {latticeData && viewMode === 'force' && (
+            <button
+              onClick={handleZoomToFit}
+              className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              🔍 Zoom to Fit
+            </button>
+          )}
 
           {latticeData && (
             <button
@@ -489,10 +563,10 @@ const ConceptLatticeAnalysis: React.FC = () => {
           {/* Visualization Card */}
           <div className="bg-white rounded-lg shadow-md p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              {viewMode === 'hesse' ? 'Hesse Diagram' : 'Network Visualization'}
+              {viewMode === 'force' ? 'Interactive Force Graph' : 'Hesse Diagram'}
             </h3>
             <div className="mb-4">
-              <div className="flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-4 text-sm flex-wrap">
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 bg-red-500 rounded-full"></div>
                   <span>Top Concept</span>
@@ -505,14 +579,56 @@ const ConceptLatticeAnalysis: React.FC = () => {
                   <div className="w-4 h-4 bg-blue-500 rounded-full"></div>
                   <span>Regular Concept</span>
                 </div>
+                {viewMode === 'force' && (
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <span>🖱️ Click nodes for details • Drag to pan • Scroll to zoom</span>
+                  </div>
+                )}
                 {viewMode === 'hesse' && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-600">L0, L1, L2... = Lattice Levels</span>
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <span>L0, L1, L2... = Lattice Levels</span>
                   </div>
                 )}
               </div>
             </div>
-            {renderLatticeVisualization()}
+
+            {viewMode === 'force' ? (
+              <div className="w-full h-[600px] border border-gray-300 rounded">
+                <ForceGraph2D
+                  ref={fgRef}
+                  graphData={graphData}
+                  nodeLabel="name"
+                  nodeAutoColorBy="group"
+                  nodeCanvasObject={handleNodeCanvasObject}
+                  onNodeClick={handleNodeClick}
+                  onNodeHover={handleNodeHover}
+                  linkDirectionalParticles={2}
+                  linkDirectionalParticleSpeed={0.005}
+                  linkDirectionalArrowLength={3}
+                  linkColor={() => '#6b7280'}
+                  backgroundColor="#ffffff"
+                  enableZoomPanInteraction={true}
+                  width={800}
+                  height={600}
+                />
+              </div>
+            ) : (
+              renderHesseDiagram()
+            )}
+
+            {/* Hover info */}
+            {hoveredNode && viewMode === 'force' && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                <div className="text-sm font-medium text-blue-900">
+                  Hovering: Concept {hoveredNode.id} {hoveredNode.label}
+                </div>
+                <div className="text-sm text-blue-700">
+                  {hoveredNode.extent_size} objects, {hoveredNode.intent_size} attributes
+                </div>
+                {hoveredNode.is_top && <div className="text-sm text-blue-600">🔺 Top Concept</div>}
+                {hoveredNode.is_bottom && <div className="text-sm text-blue-600">🔻 Bottom Concept</div>}
+              </div>
+            )}
           </div>
 
           {/* Selected Node Details */}
