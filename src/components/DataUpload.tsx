@@ -30,6 +30,8 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
     accept: {
       'application/json': ['.json'],
       'text/csv': ['.csv'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
     },
     multiple: false,
   });
