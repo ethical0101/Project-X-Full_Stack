@@ -109,3 +109,8 @@ dmypy.json
 # Temporary files
 *.tmp
 *.temp
+
+# Local Python virtual environment
+# Exclude the project-level virtualenv directory
+.venv/
+.venv/*
