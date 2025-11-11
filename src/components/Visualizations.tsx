@@ -35,14 +35,38 @@ interface VisualizationsProps {
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D', '#FFC658', '#FF7C7C', '#8DD1E1', '#D084D0'];
 
+type VisualizationRequirement = 'rules' | 'itemsets';
+
+type VisualizationOption = {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  requires: VisualizationRequirement;
+};
+
+const VISUALIZATION_CONFIG: VisualizationOption[] = [
+  { id: 'support-lift', name: 'Support vs Lift Scatter', icon: '📊', description: 'Rule quality distribution analysis', requires: 'rules' as const },
+  { id: 'item-frequency', name: 'Item Frequency', icon: '📈', description: 'Most frequent items in dataset', requires: 'itemsets' as const },
+  { id: 'confidence-dist', name: 'Confidence Distribution', icon: '📉', description: 'Rule confidence histogram', requires: 'rules' as const },
+  { id: 'itemset-length', name: 'Itemset Length Distribution', icon: '🔢', description: 'Itemset size breakdown', requires: 'itemsets' as const },
+  { id: 'quality-radar', name: 'Quality Metrics Radar', icon: '🎯', description: 'Multi-dimensional quality view', requires: 'rules' as const },
+  { id: 'support-confidence', name: 'Support vs Confidence', icon: '🎲', description: 'Rule quality quadrants', requires: 'rules' as const },
+  { id: 'antecedent-dist', name: 'Antecedent Distribution', icon: '📋', description: 'Rule condition analysis', requires: 'rules' as const },
+  { id: 'consequent-dist', name: 'Consequent Distribution', icon: '🎯', description: 'Rule outcome analysis', requires: 'rules' as const },
+  { id: 'confidence-treemap', name: 'Confidence Treemap', icon: '🌳', description: 'Hierarchical confidence view', requires: 'rules' as const },
+  { id: 'bubble-chart', name: 'Rule Bubble Chart', icon: '💭', description: '3D rule quality visualization', requires: 'rules' as const },
+  { id: 'parallel-coordinates', name: 'Parallel Coordinates', icon: '📏', description: 'Multi-metric rule analysis', requires: 'rules' as const },
+  { id: 'lift-heatmap', name: 'Lift Heatmap', icon: '🌡️', description: 'Item association matrix', requires: 'rules' as const }
+];
+
 export default function Visualizations({ data }: VisualizationsProps) {
   const [selectedVisualization, setSelectedVisualization] = useState('support-lift');
 
-  console.log('Visualizations received data:', data);
-  console.log('Frequent itemsets:', data?.frequent_itemsets);
-  console.log('Association rules:', data?.association_rules);
+  const hasItemsets = Array.isArray(data?.frequent_itemsets) && data.frequent_itemsets.length > 0;
+  const hasRules = Array.isArray(data?.association_rules) && data.association_rules.length > 0;
 
-  if (!data || !data.frequent_itemsets || !data.association_rules) {
+  if (!data || (!hasItemsets && !hasRules)) {
     return (
       <div className="p-8 text-center">
         <div className="text-gray-400 mb-4">
@@ -56,6 +80,12 @@ export default function Visualizations({ data }: VisualizationsProps) {
       </div>
     );
   }
+
+  useEffect(() => {
+    if (!hasRules && selectedVisualization !== 'item-frequency' && selectedVisualization !== 'itemset-length') {
+      setSelectedVisualization(hasItemsets ? 'item-frequency' : 'support-lift');
+    }
+  }, [hasRules, hasItemsets, selectedVisualization]);
 
   // === DATA PROCESSING FOR ALL VISUALIZATIONS ===
 
@@ -192,7 +222,7 @@ export default function Visualizations({ data }: VisualizationsProps) {
   for (let i = 0; i < topItems.length; i++) {
     for (let j = 0; j < topItems.length; j++) {
       if (i !== j) {
-        const rule = data.association_rules?.find((r: any) => {
+  const rule = data.association_rules?.find((r: any) => {
           const antecedents = Array.isArray(r.antecedents) ? r.antecedents : [r.antecedents];
           const consequents = Array.isArray(r.consequents) ? r.consequents : [r.consequents];
           return antecedents.includes(topItems[i]) && consequents.includes(topItems[j]);
@@ -210,20 +240,17 @@ export default function Visualizations({ data }: VisualizationsProps) {
   }
 
   // === VISUALIZATION DEFINITIONS ===
-  const visualizations = [
-    { id: 'support-lift', name: 'Support vs Lift Scatter', icon: '📊', description: 'Rule quality distribution analysis' },
-    { id: 'item-frequency', name: 'Item Frequency', icon: '📈', description: 'Most frequent items in dataset' },
-    { id: 'confidence-dist', name: 'Confidence Distribution', icon: '📉', description: 'Rule confidence histogram' },
-    { id: 'itemset-length', name: 'Itemset Length Distribution', icon: '🔢', description: 'Itemset size breakdown' },
-    { id: 'quality-radar', name: 'Quality Metrics Radar', icon: '🎯', description: 'Multi-dimensional quality view' },
-    { id: 'support-confidence', name: 'Support vs Confidence', icon: '🎲', description: 'Rule quality quadrants' },
-    { id: 'antecedent-dist', name: 'Antecedent Distribution', icon: '📋', description: 'Rule condition analysis' },
-    { id: 'consequent-dist', name: 'Consequent Distribution', icon: '🎯', description: 'Rule outcome analysis' },
-    { id: 'confidence-treemap', name: 'Confidence Treemap', icon: '🌳', description: 'Hierarchical confidence view' },
-    { id: 'bubble-chart', name: 'Rule Bubble Chart', icon: '💭', description: '3D rule quality visualization' },
-    { id: 'parallel-coordinates', name: 'Parallel Coordinates', icon: '📏', description: 'Multi-metric rule analysis' },
-    { id: 'lift-heatmap', name: 'Lift Heatmap', icon: '🌡️', description: 'Item association matrix' }
-  ];
+  const visualizationOptions: VisualizationOption[] = VISUALIZATION_CONFIG.filter((viz) => {
+    if (viz.requires === 'rules' && !hasRules) return false;
+    if (viz.requires === 'itemsets' && !hasItemsets) return false;
+    return true;
+  });
+
+  useEffect(() => {
+    if (!visualizationOptions.some((viz) => viz.id === selectedVisualization)) {
+      setSelectedVisualization(visualizationOptions[0]?.id || 'support-lift');
+    }
+  }, [visualizationOptions, selectedVisualization]);
 
   // === RENDER VISUALIZATION FUNCTION ===
   const renderVisualization = () => {
@@ -526,29 +553,41 @@ export default function Visualizations({ data }: VisualizationsProps) {
       <div className="mb-6">
         <h3 className="text-lg font-semibold mb-3">Choose Visualization</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {visualizations.map((viz) => (
-            <button
-              key={viz.id}
-              onClick={() => setSelectedVisualization(viz.id)}
-              className={`p-3 rounded-lg border text-left transition-all duration-200 ${
-                selectedVisualization === viz.id
-                  ? 'bg-blue-500 text-white border-blue-500 shadow-lg transform scale-105'
-                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400'
-              }`}
-            >
-              <div className="flex items-center mb-1">
-                <span className="text-lg mr-2">{viz.icon}</span>
-                <span className="font-medium text-sm">{viz.name}</span>
+            {visualizationOptions.length > 0 ? (
+              visualizationOptions.map((viz) => (
+                <button
+                  key={viz.id}
+                  onClick={() => setSelectedVisualization(viz.id)}
+                  className={`p-3 rounded-lg border text-left transition-all duration-200 ${
+                    selectedVisualization === viz.id
+                      ? 'bg-blue-500 text-white border-blue-500 shadow-lg transform scale-105'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+                  }`}
+                >
+                  <div className="flex items-center mb-1">
+                    <span className="text-lg mr-2">{viz.icon}</span>
+                    <span className="font-medium text-sm">{viz.name}</span>
+                  </div>
+                  <p className="text-xs opacity-75">{viz.description}</p>
+                </button>
+              ))
+            ) : (
+              <div className="col-span-full text-sm text-gray-500">
+                No visualizations available for the current data set. Please ensure pattern mining has generated itemsets or rules.
               </div>
-              <p className="text-xs opacity-75">{viz.description}</p>
-            </button>
-          ))}
+            )}
         </div>
       </div>
 
       {/* Visualization Container */}
       <div className="bg-white rounded-lg shadow-lg border p-6 mb-6">
-        {renderVisualization()}
+        {visualizationOptions.length > 0 ? (
+          renderVisualization()
+        ) : (
+          <div className="text-center text-sm text-gray-500">
+            Visualizations will appear once pattern mining generates itemsets or association rules.
+          </div>
+        )}
       </div>
 
       {/* Data Insights */}

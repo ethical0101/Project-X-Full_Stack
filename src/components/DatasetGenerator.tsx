@@ -18,7 +18,8 @@ export default function DatasetGenerator({ onDataGenerated }: DatasetGeneratorPr
   const [avgItemsPerTransaction, setAvgItemsPerTransaction] = useState(5);
   const [distributionType, setDistributionType] = useState<'uniform' | 'normal' | 'exponential' | 'zipf'>('uniform');
   const [outputFormat, setOutputFormat] = useState<'csv' | 'xlsx' | 'json'>('csv');
-  const [exportFormat, setExportFormat] = useState<'transaction_per_row' | 'item_per_row'>('transaction_per_row');
+  const [exportFormat, setExportFormat] = useState<'transaction_per_row' | 'item_per_row'>('item_per_row');
+  const [minItemsPerTransaction, setMinItemsPerTransaction] = useState(1);
 
   const generateDataset = async () => {
     setIsGenerating(true);
@@ -35,7 +36,8 @@ export default function DatasetGenerator({ onDataGenerated }: DatasetGeneratorPr
           avg_items_per_transaction: avgItemsPerTransaction,
           distribution_type: distributionType,
           output_format: outputFormat,
-          export_format: exportFormat,
+            export_format: exportFormat,
+            min_items_per_transaction: minItemsPerTransaction,
         }),
       });
 
@@ -172,6 +174,28 @@ export default function DatasetGenerator({ onDataGenerated }: DatasetGeneratorPr
               </div>
             </div>
 
+            {/* Minimum Items per Transaction */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Min Items per Transaction: {minItemsPerTransaction}
+              </label>
+              <input
+                type="range"
+                min="1"
+                max={Math.max(1, Math.min(50, numberOfItems))}
+                step="1"
+                value={minItemsPerTransaction}
+                onChange={(e) => setMinItemsPerTransaction(parseInt(e.target.value))}
+                className="w-full"
+                disabled={isGenerating}
+              />
+              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                <span>1</span>
+                <span>{Math.max(1, Math.min(50, numberOfItems))}</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Ensure generated transactions contain at least this many items (useful to guarantee rules).</p>
+            </div>
+
             {/* Distribution Type */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -236,7 +260,7 @@ export default function DatasetGenerator({ onDataGenerated }: DatasetGeneratorPr
                     className="mr-2"
                     disabled={isGenerating}
                   />
-                  <span className="text-sm">Item per Row</span>
+                  <span className="text-sm">Item per Row (recommended)</span>
                 </label>
               </div>
             </div>

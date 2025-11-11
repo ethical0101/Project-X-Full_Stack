@@ -48,6 +48,24 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 export default function Dashboard({ data }: DashboardProps) {
   const [status, setStatus] = useState<StatusData | null>(null);
   const [isPolling, setIsPolling] = useState(false);
+  const [restockList, setRestockList] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('restock_items');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [selectedTopItems, setSelectedTopItems] = useState<Record<string, boolean>>({});
+
+  // Persist restock list to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('restock_items', JSON.stringify(restockList));
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [restockList]);
 
   // Poll status updates
   useEffect(() => {
@@ -96,7 +114,7 @@ export default function Dashboard({ data }: DashboardProps) {
   if (!data) {
     return (
       <div className="p-8 text-center">
-        <div className="text-gray-400 mb-4">
+        <div className="mb-4 text-gray-400">
           <svg
             className="w-16 h-16 mx-auto"
             fill="none"
@@ -111,7 +129,7 @@ export default function Dashboard({ data }: DashboardProps) {
             />
           </svg>
         </div>
-        <h3 className="text-lg font-medium text-gray-600 mb-2">No Data Available</h3>
+        <h3 className="mb-2 text-lg font-medium text-gray-600">No Data Available</h3>
         <p className="text-gray-500">Please upload and process data first to view the dashboard.</p>
       </div>
     );
@@ -122,16 +140,16 @@ export default function Dashboard({ data }: DashboardProps) {
     if (!status?.processing?.is_processing) return null;
 
     return (
-      <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-        <h3 className="text-lg font-semibold mb-4">Processing Data...</h3>
+      <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
+        <h3 className="mb-4 text-lg font-semibold">Processing Data...</h3>
         <div className="space-y-4">
           <div className="flex justify-between text-sm text-gray-600">
             <span>{status.processing.current_step}</span>
             <span>{status.processing.progress}%</span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
+          <div className="w-full h-2 bg-gray-200 rounded-full">
             <div
-              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+              className="h-2 transition-all duration-300 bg-blue-600 rounded-full"
               style={{ width: `${status.processing.progress}%` }}
             ></div>
           </div>
@@ -179,13 +197,13 @@ export default function Dashboard({ data }: DashboardProps) {
     ];
 
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 gap-6 mb-8 md:grid-cols-2 lg:grid-cols-4">
         {cards.map((card, index) => (
           <div key={index} className={`bg-gradient-to-r ${card.color} text-white p-6 rounded-lg shadow-lg transform transition-transform hover:scale-105`}>
             <div className="flex items-center justify-between mb-2">
               <div className="text-2xl opacity-80">{card.icon}</div>
               {card.trend !== null && card.trend > 0 && (
-                <div className="text-xs bg-white bg-opacity-20 px-2 py-1 rounded">
+                <div className="px-2 py-1 text-xs bg-white rounded bg-opacity-20">
                   Processing...
                 </div>
               )}
@@ -208,8 +226,10 @@ export default function Dashboard({ data }: DashboardProps) {
       frequency: itemset.support || 0
     })) || [];
 
-    // Top items frequency
+    // Top items frequency - build a normalized map from multiple possible backend shapes
     const itemFrequency: { [key: string]: number } = {};
+
+    // Prefer frequent_itemsets if available (take highest support per item)
     data.frequent_itemsets?.forEach((itemset: any) => {
       const items = Array.isArray(itemset.itemset) ? itemset.itemset : [itemset.itemset];
       items.forEach((item: string) => {
@@ -217,14 +237,71 @@ export default function Dashboard({ data }: DashboardProps) {
       });
     });
 
+    // Fallbacks: several endpoints may return item frequencies in different shapes.
+    // Normalize them to a support value in [0,1]. Use data.stats.total_transactions when available.
+    const totalTx = data.stats?.total_transactions || data.summary?.transaction_count || null;
+
+    const normalizeEntry = (entry: any) => {
+      const name = entry.item || entry.name || entry.label;
+      if (!name) return null;
+
+      // If explicit support provided (0..1), use it
+      if (typeof entry.support === 'number' && entry.support >= 0 && entry.support <= 1) {
+        return { name, support: entry.support };
+      }
+
+      // If frequency/count provided and total transactions known, compute support
+      const freq = entry.frequency ?? entry.count ?? entry.freq ?? null;
+      if (typeof freq === 'number' && totalTx) {
+        return { name, support: freq / totalTx };
+      }
+
+      // If only frequency provided and total unknown, normalize later by max frequency
+      if (typeof freq === 'number') {
+        return { name, support: freq };
+      }
+
+      return null;
+    };
+
+    if (Object.keys(itemFrequency).length === 0) {
+      const sources = [data.item_frequencies, data.analytics?.item_frequencies, data.analytics?.top_items, data.itemFrequencies];
+      let collected: any[] = [];
+      for (const s of sources) {
+        if (Array.isArray(s) && s.length) {
+          collected = s;
+          break;
+        }
+      }
+
+      if (collected.length) {
+        // First pass: try to collect supports or frequencies
+        const temp: { name: string; support: number }[] = [];
+        let maxRawFreq = 0;
+        collected.forEach((entry: any) => {
+          const ne = normalizeEntry(entry);
+          if (ne) {
+            temp.push(ne);
+            if (ne.support > maxRawFreq) maxRawFreq = ne.support;
+          }
+        });
+
+        // If supports appear >1 (raw counts) and totalTx unknown, normalize by maxRawFreq
+        temp.forEach(({ name, support }) => {
+          const finalSupport = (support > 1 && !totalTx) ? (support / maxRawFreq) : support;
+          itemFrequency[name] = finalSupport;
+        });
+      }
+    }
+
     const topItemsData = Object.entries(itemFrequency)
       .sort(([,a], [,b]) => b - a)
       .slice(0, 10)
       .map(([name, frequency]) => ({ name, frequency: frequency * 100 }));
 
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        <div className="bg-white rounded-lg shadow-md border">
+      <div className="grid grid-cols-1 gap-6 mb-8 lg:grid-cols-2">
+        <div className="bg-white border rounded-lg shadow-md">
           <div className="px-6 py-4 border-b">
             <h3 className="text-lg font-semibold">Top Frequent Itemsets</h3>
           </div>
@@ -246,7 +323,7 @@ export default function Dashboard({ data }: DashboardProps) {
                     `${typeof value === 'number' ? value.toFixed(2) : value}%`,
                     name === 'support' ? 'Support' : name
                   ]}
-                  labelFormatter={(label) => itemsetsData.find(d => d.name === label)?.items || label}
+                  labelFormatter={(label) => itemsetsData.find((d: typeof itemsetsData[number]) => d.name === label)?.items || label}
                 />
                 <Bar dataKey="support" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -254,20 +331,154 @@ export default function Dashboard({ data }: DashboardProps) {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-md border">
+        <div className="bg-white border rounded-lg shadow-md">
           <div className="px-6 py-4 border-b">
             <h3 className="text-lg font-semibold">Most Frequent Items</h3>
           </div>
           <div className="p-4">
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={topItemsData} layout="horizontal" margin={{ top: 20, right: 30, left: 60, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" tick={{ fontSize: 10 }} />
-                <YAxis dataKey="name" type="category" width={50} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(value: any) => [`${(value * 100).toFixed(2)}%`, 'Support']} />
-                <Bar dataKey="frequency" fill="#10b981" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {/* Replaced chart with a robust list view to avoid rendering issues on some datasets */}
+            <div className="space-y-2">
+              {topItemsData.length === 0 && (
+                <div className="text-sm text-gray-500">No frequent items available</div>
+              )}
+              {topItemsData.slice(0, 10).map((it: any, idx: number) => (
+                <div key={it.name} className="flex items-center justify-between">
+                  <div className="flex-1 pr-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">{it.name}</span>
+                      <span className="text-xs text-gray-500">{(it.frequency).toFixed(1)}%</span>
+                    </div>
+                    <div className="w-full h-2 mt-2 overflow-hidden bg-gray-200 rounded">
+                      <div className="h-2 bg-green-500" style={{ width: `${Math.min(100, Math.max(0, it.frequency))}%` }}></div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Restock panel for customers to keep frequently-stocked items
+  const renderRestockPanel = () => {
+    // Build top items similar to itemFrequency normalization used above
+    const itemFrequency: { [key: string]: number } = {};
+    data.frequent_itemsets?.forEach((itemset: any) => {
+      const items = Array.isArray(itemset.itemset) ? itemset.itemset : [itemset.itemset];
+      items.forEach((item: string) => {
+        itemFrequency[item] = Math.max(itemFrequency[item] || 0, itemset.support || 0);
+      });
+    });
+
+    const totalTx = data.stats?.total_transactions || data.summary?.transaction_count || null;
+    if (Object.keys(itemFrequency).length === 0) {
+      const sources = [data.item_frequencies, data.analytics?.item_frequencies, data.analytics?.top_items, data.itemFrequencies];
+      let collected: any[] = [];
+      for (const s of sources) {
+        if (Array.isArray(s) && s.length) { collected = s; break; }
+      }
+      if (collected.length) {
+        const temp: { name: string; support: number }[] = [];
+        let maxRaw = 0;
+        collected.forEach((entry: any) => {
+          const name = entry.item || entry.name || entry.label;
+          if (!name) return;
+          if (typeof entry.support === 'number') {
+            temp.push({ name, support: entry.support });
+            if (entry.support > maxRaw) maxRaw = entry.support;
+            return;
+          }
+          const freq = entry.frequency ?? entry.count ?? entry.freq ?? null;
+          if (typeof freq === 'number' && totalTx) {
+            temp.push({ name, support: freq / totalTx });
+            if (freq > maxRaw) maxRaw = freq;
+            return;
+          }
+          if (typeof freq === 'number') {
+            temp.push({ name, support: freq });
+            if (freq > maxRaw) maxRaw = freq;
+          }
+        });
+        temp.forEach(({ name, support }) => {
+          const finalSupport = (support > 1 && !totalTx) ? (support / maxRaw) : support;
+          itemFrequency[name] = finalSupport;
+        });
+      }
+    }
+
+    const topItems = Object.entries(itemFrequency)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 20)
+      .map(([name, support]) => ({ name, support }));
+
+    const toggleSelect = (name: string) => {
+      setSelectedTopItems(prev => ({ ...prev, [name]: !prev[name] }));
+    };
+
+    const addSelectedToRestock = () => {
+      const toAdd = Object.keys(selectedTopItems).filter(k => selectedTopItems[k] && !restockList.includes(k));
+      if (toAdd.length === 0) return;
+      setRestockList(prev => [...prev, ...toAdd]);
+      setSelectedTopItems({});
+    };
+
+    const removeFromRestock = (name: string) => {
+      setRestockList(prev => prev.filter(x => x !== name));
+    };
+
+    const downloadRestockCSV = () => {
+      const header = 'item\n';
+      const body = restockList.join('\n');
+      const blob = new Blob([header + body], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'restock_list.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    };
+
+    return (
+      <div className="p-4 mb-8 bg-white border rounded-lg shadow-md">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-semibold">Customer Restock List (Top Items)</h3>
+          <div className="flex items-center space-x-2">
+            <button onClick={addSelectedToRestock} className="px-3 py-1 text-sm text-white bg-blue-600 rounded">Add selected</button>
+            <button onClick={downloadRestockCSV} className="px-3 py-1 text-sm text-white bg-green-600 rounded">Download CSV</button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <div className="mb-2 text-sm text-gray-600">Top items (select to add)</div>
+            <div className="p-2 overflow-y-auto border rounded max-h-48">
+              {topItems.map(item => (
+                <label key={item.name} className="flex items-center justify-between py-1">
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" checked={!!selectedTopItems[item.name]} onChange={() => toggleSelect(item.name)} />
+                    <span className="text-sm">{item.name}</span>
+                  </div>
+                  <span className="text-xs text-gray-500">{(item.support * 100).toFixed(1)}%</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 text-sm text-gray-600">Restock list</div>
+            <div className="p-2 overflow-y-auto border rounded max-h-48">
+              {restockList.length === 0 && <div className="text-sm text-gray-500">No items added yet</div>}
+              {restockList.map((it) => (
+                <div key={it} className="flex items-center justify-between py-1">
+                  <span className="text-sm">{it}</span>
+                  <button onClick={() => removeFromRestock(it)} className="text-xs text-red-600">Remove</button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -307,8 +518,8 @@ export default function Dashboard({ data }: DashboardProps) {
     });
 
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        <div className="bg-white rounded-lg shadow-md border">
+      <div className="grid grid-cols-1 gap-6 mb-8 lg:grid-cols-2">
+        <div className="bg-white border rounded-lg shadow-md">
           <div className="px-6 py-4 border-b">
             <h3 className="text-lg font-semibold">Rule Quality Analysis</h3>
           </div>
@@ -331,7 +542,7 @@ export default function Dashboard({ data }: DashboardProps) {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-md border">
+        <div className="bg-white border rounded-lg shadow-md">
           <div className="px-6 py-4 border-b">
             <h3 className="text-lg font-semibold">Confidence Distribution</h3>
           </div>
@@ -365,8 +576,8 @@ export default function Dashboard({ data }: DashboardProps) {
     const rulesData = data.association_rules || data.rules || [];
 
     return (
-      <div className="bg-white rounded-lg shadow border">
-        <div className="px-6 py-4 border-b flex justify-between items-center">
+      <div className="bg-white border rounded-lg shadow">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
           <h3 className="text-lg font-semibold">Association Rules</h3>
           <div className="text-sm text-gray-500">
             Showing {Math.min(rulesData.length, 10)} of {rulesData.length} rules
@@ -376,22 +587,22 @@ export default function Dashboard({ data }: DashboardProps) {
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
                   #
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
                   Antecedent
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
                   Consequent
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
                   Support
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
                   Confidence
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
                   Lift
                 </th>
               </tr>
@@ -399,19 +610,19 @@ export default function Dashboard({ data }: DashboardProps) {
             <tbody className="divide-y divide-gray-200">
               {rulesData.slice(0, 10).map((rule: any, index: number) => (
                 <tr key={index} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap">
                     {index + 1}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-wrap gap-1">
                       {Array.isArray(rule.antecedents)
                         ? rule.antecedents.map((ant: string, i: number) => (
-                            <span key={i} className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                            <span key={i} className="px-2 py-1 text-xs text-blue-800 bg-blue-100 rounded">
                               {ant}
                             </span>
                           ))
                         : rule.antecedents && (
-                          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                          <span className="px-2 py-1 text-xs text-blue-800 bg-blue-100 rounded">
                             {rule.antecedents}
                           </span>
                         )
@@ -422,12 +633,12 @@ export default function Dashboard({ data }: DashboardProps) {
                     <div className="flex flex-wrap gap-1">
                       {Array.isArray(rule.consequents)
                         ? rule.consequents.map((cons: string, i: number) => (
-                            <span key={i} className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
+                            <span key={i} className="px-2 py-1 text-xs text-green-800 bg-green-100 rounded">
                               {cons}
                             </span>
                           ))
                         : rule.consequents && (
-                          <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
+                          <span className="px-2 py-1 text-xs text-green-800 bg-green-100 rounded">
                             {rule.consequents}
                           </span>
                         )
@@ -473,13 +684,14 @@ export default function Dashboard({ data }: DashboardProps) {
   return (
     <div className="p-8">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold mb-2">Mining Results Dashboard</h2>
+        <h2 className="mb-2 text-2xl font-bold">Mining Results Dashboard</h2>
         <p className="text-gray-600">Real-time analysis of frequent patterns and association rules</p>
       </div>
 
       {renderProgressIndicator()}
       {renderSummaryCards()}
-      {renderItemsetsChart()}
+  {renderItemsetsChart()}
+  {renderRestockPanel()}
       {renderRulesChart()}
       {renderRulesTable()}
     </div>

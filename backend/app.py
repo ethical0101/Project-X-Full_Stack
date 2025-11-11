@@ -1,13 +1,22 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import pandas as pd
-from mlxtend.frequent_patterns import apriori, fpgrowth, eclat, association_rules
+from mlxtend.frequent_patterns import apriori, fpgrowth, association_rules
+from collections import Counter
+try:
+    # eclat may not be available in some mlxtend versions
+    from mlxtend.frequent_patterns import eclat
+except Exception:
+    eclat = None
 from mlxtend.preprocessing import TransactionEncoder
 import json
 import io
 import time
 from datetime import datetime
 import numpy as np
+import tempfile
+import random
+import math
 import os
 from fca import build_concept_lattice, lattice_to_json
 
@@ -84,7 +93,6 @@ def get_status():
             total_estimated = elapsed / (processing_state["progress"] / 100)
             remaining = total_estimated - elapsed
             status_data["processing"]["estimated_completion"] = datetime.now().timestamp() + remaining
-
     return jsonify(status_data)
 
 @app.route('/upload', methods=['POST'])
@@ -93,6 +101,12 @@ def upload_data():
     global current_data, current_itemsets, current_rules, current_transactions, processing_results
 
     try:
+        # Mark processing state
+        processing_state["is_processing"] = True
+        processing_state["current_step"] = "upload"
+        processing_state["progress"] = 5
+        processing_state["started_at"] = datetime.now()
+
         if 'file' not in request.files:
             return jsonify({"error": "No file provided"}), 400
 
@@ -103,27 +117,58 @@ def upload_data():
         # Read the uploaded file
         print(f"Processing file: {file.filename}")
         if file.filename and file.filename.endswith('.csv'):
-            # Read CSV content as text first to handle variable-length rows
+            # Read CSV content as text first
             csv_content = file.stream.read().decode("UTF-8")
             print(f"CSV content preview: {csv_content[:200]}...")
 
-            # Parse CSV manually to handle variable-length transactions
-            lines = csv_content.strip().split('\n')
             transactions = []
 
-            for line_num, line in enumerate(lines, 1):
-                if line.strip():  # Skip empty lines
-                    # Split by comma and clean items
-                    items = [item.strip().strip('"') for item in line.split(',')]
-                    items = [item for item in items if item]  # Remove empty items
-                    if items:  # Only add non-empty transactions
-                        transactions.append(items)
-                        print(f"Line {line_num}: {items}")
+            # Try to parse with pandas to detect common formats (item-per-row vs transaction-per-row)
+            try:
+                # First attempt: assume header present
+                df_csv = pd.read_csv(io.StringIO(csv_content), dtype=str, header=0)
 
-            print(f"Parsed {len(transactions)} transactions from CSV")
+                # If dataframe looks like item-per-row (transaction_id + item columns), use grouping
+                if 'transaction_id' in df_csv.columns and len(df_csv.columns) >= 2:
+                    print("Detected CSV with 'transaction_id' column - treating as item-per-row format")
+                    transactions = process_dataframe_to_transactions(df_csv)
+                    df = pd.DataFrame({'transaction_id': range(len(transactions))})
+                elif df_csv.shape[1] == 2:
+                    # Two-column CSV without header: treat as item-per-row
+                    print("Detected 2-column CSV - treating as item-per-row format")
+                    df_noheader = pd.read_csv(io.StringIO(csv_content), dtype=str, header=None)
+                    transactions = process_dataframe_to_transactions(df_noheader)
+                    df = pd.DataFrame({'transaction_id': range(len(transactions))})
+                else:
+                    # Otherwise treat each row as a transaction (comma-separated items)
+                    print("Treating CSV as transaction-per-row (one transaction per line)")
+                    lines = csv_content.strip().split('\n')
+                    for line_num, line in enumerate(lines, 1):
+                        if line.strip():  # Skip empty lines
+                            items = [item.strip().strip('"') for item in line.split(',')]
+                            items = [item for item in items if item]
+                            if items:
+                                transactions.append(items)
+                                print(f"Line {line_num}: {items}")
 
-            # Create a simple DataFrame for compatibility
-            df = pd.DataFrame({'transaction_id': range(len(transactions))})
+                    df = pd.DataFrame({'transaction_id': range(len(transactions))})
+
+                print(f"Parsed {len(transactions)} transactions from CSV (pandas-detected path)")
+
+            except Exception as e:
+                # Fallback: manual parsing line-by-line
+                print(f"CSV parsing with pandas failed ({e}), falling back to simple parsing")
+                lines = csv_content.strip().split('\n')
+                for line_num, line in enumerate(lines, 1):
+                    if line.strip():
+                        items = [item.strip().strip('"') for item in line.split(',')]
+                        items = [item for item in items if item]
+                        if items:
+                            transactions.append(items)
+                            print(f"Line {line_num}: {items}")
+
+                print(f"Parsed {len(transactions)} transactions from CSV (fallback)")
+                df = pd.DataFrame({'transaction_id': range(len(transactions))})
 
         elif file.filename and file.filename.endswith('.json'):
             data = json.loads(file.stream.read().decode("UTF-8"))
@@ -206,6 +251,8 @@ def upload_data():
         print(f"Sample transactions: {transactions[:3] if transactions else 'None'}")
 
         if not transactions:
+            processing_state["is_processing"] = False
+            processing_state["progress"] = 100
             return jsonify({"error": "No valid transactions found in the data"}), 400
 
         # Encode transactions
@@ -237,6 +284,11 @@ def upload_data():
         # Sort by support
         item_frequencies.sort(key=lambda x: x['support'], reverse=True)
 
+        # Upload processing finished
+        processing_state["current_step"] = "upload_complete"
+        processing_state["progress"] = 30
+        processing_state["is_processing"] = False
+
         return jsonify({
             "message": "Data uploaded and processed successfully",
             "stats": stats,
@@ -255,10 +307,23 @@ def process_dataframe_to_transactions(df):
     if 'transaction_id' in df.columns:
         # Transaction format: one row per transaction
         item_columns = [col for col in df.columns if col != 'transaction_id']
-        for _, row in df.iterrows():
-            transaction = [str(row[col]) for col in item_columns if pd.notna(row[col]) and str(row[col]).strip()]
-            if transaction:  # Only add non-empty transactions
-                transactions.append(transaction)
+
+        # If the DataFrame is an item-per-row (transaction_id, item) format where multiple
+        # rows share the same transaction_id, group items by transaction_id into transactions.
+        if len(item_columns) == 1 and df.shape[0] > df['transaction_id'].nunique():
+            transaction_col = 'transaction_id'
+            item_col = item_columns[0]
+            grouped = df.groupby(transaction_col)[item_col].apply(list)
+            for transaction in grouped:
+                clean_transaction = [str(item).strip() for item in transaction if pd.notna(item) and str(item).strip()]
+                if clean_transaction:
+                    transactions.append(clean_transaction)
+        else:
+            # Otherwise assume one row per transaction with multiple item columns
+            for _, row in df.iterrows():
+                transaction = [str(row[col]) for col in item_columns if pd.notna(row[col]) and str(row[col]).strip()]
+                if transaction:  # Only add non-empty transactions
+                    transactions.append(transaction)
     else:
         # Item format: one row per item
         if len(df.columns) >= 2:
@@ -287,7 +352,15 @@ def mine_patterns():
     global current_data, current_itemsets, current_rules, current_transactions, processing_results
 
     try:
+        # Mark processing state
+        processing_state["is_processing"] = True
+        processing_state["current_step"] = "mining"
+        processing_state["progress"] = 50
+        processing_state["started_at"] = datetime.now()
+
         if current_data is None or current_transactions is None:
+            processing_state["is_processing"] = False
+            processing_state["progress"] = 100
             return jsonify({"error": "No data uploaded. Please upload data first."}), 400
 
         # Get parameters
@@ -303,63 +376,143 @@ def mine_patterns():
         print("Sample transactions:", transactions[:5])
         print("Transaction lengths:", [len(t) for t in transactions[:10]])
 
-        # Encode transactions
-        te = TransactionEncoder()
-        te_ary = te.fit(transactions).transform(transactions)
-        # Convert to numpy array
-        te_array = np.array(te_ary)
-        df_encoded = pd.DataFrame(te_array, columns=te.columns_)
+        # Prefilter items by frequency to avoid creating extremely large one-hot matrices
+        num_transactions = len(transactions)
+        item_counts = Counter()
+        for t in transactions:
+            for it in t:
+                item_counts[it] += 1
 
-        print(f"Encoded DataFrame shape: {df_encoded.shape}")
-        print("Items found:", list(te.columns_))
-        print("Support for each item:")
-        for col in te.columns_:
-            support = df_encoded[col].mean()
-            print(f"  {col}: {support:.3f}")
+        unique_items = len(item_counts)
+        print(f"Unique items in transactions: {unique_items}")
 
-        # Mine frequent itemsets
-        start_time = time.time()
-        if algorithm == 'apriori':
-            frequent_itemsets = apriori(df_encoded, min_support=min_support, use_colnames=True)
-        elif algorithm == 'eclat':
-            frequent_itemsets = eclat(df_encoded, min_support=min_support, use_colnames=True)
-        else:  # fpgrowth
-            frequent_itemsets = fpgrowth(df_encoded, min_support=min_support, use_colnames=True)
+        # Determine a safe cap for unique items to encode
+        MAX_UNIQUE_ITEMS_ENCODE = 15000
 
-        mining_time = time.time() - start_time
-
-        if frequent_itemsets.empty:
-            return jsonify({
-                "message": "No frequent itemsets found with the given support threshold",
-                "itemsets": [],
-                "rules": [],
-                "performance": {"mining_time": mining_time}
-            })
-
-        print(f"Found {len(frequent_itemsets)} frequent itemsets")
-        print("Sample itemsets:", frequent_itemsets.head())
-
-        # Generate association rules (need itemsets with length >= 2)
-        frequent_itemsets_filtered = frequent_itemsets[frequent_itemsets['itemsets'].apply(lambda x: len(x) >= 2)]
-        print(f"Itemsets with length >= 2: {len(frequent_itemsets_filtered)}")
-
-        if frequent_itemsets_filtered.empty:
-            print("No itemsets with length >= 2 found for rule generation")
-            rules = pd.DataFrame()  # Empty rules dataframe
+        # If too many unique items, keep only the top-K most frequent items
+        if unique_items > MAX_UNIQUE_ITEMS_ENCODE:
+            most_common = [it for it, _ in item_counts.most_common(MAX_UNIQUE_ITEMS_ENCODE)]
+            items_to_keep = set(most_common)
+            print(f"Capping unique items to top {MAX_UNIQUE_ITEMS_ENCODE} by frequency to reduce memory usage")
         else:
+            items_to_keep = set(item_counts.keys())
+
+        # Filter transactions to keep only items in items_to_keep
+        filtered_transactions = [[it for it in t if it in items_to_keep] for t in transactions]
+
+        # If after filtering there are no items, fall back to original transactions (will be handled by adaptive loop)
+        if all(len(t) == 0 for t in filtered_transactions):
+            df_encoded = pd.DataFrame()
+            te = None
+            te_columns = []
+            print("No items remain after pre-filtering; will rely on adaptive mining to relax thresholds")
+        else:
+            te = TransactionEncoder()
+            te_ary = te.fit(filtered_transactions).transform(filtered_transactions)
+            te_array = np.array(te_ary)
+            df_encoded = pd.DataFrame(te_array, columns=te.columns_)
+            te_columns = list(te.columns_)
+
+            print(f"Encoded DataFrame shape: {df_encoded.shape}")
+            print("Items found:", te_columns)
+            print("Support for each item (sample):")
+            for col in te_columns[:20]:
+                support = df_encoded[col].mean()
+                print(f"  {col}: {support:.3f}")
+
+        # Mine frequent itemsets with adaptive relaxation if needed
+        # Safety floors and parameters
+        MIN_SUPPORT_FLOOR = 0.001
+        MIN_CONFIDENCE_FLOOR = 0.1
+        SUPPORT_RELAX_FACTOR = 0.5  # multiply support by this when relaxing
+        CONFIDENCE_RELAX_STEP = 0.05  # subtract this from confidence when relaxing
+        MAX_ATTEMPTS = 6
+
+        attempts = []
+        current_support = float(min_support)
+        current_confidence = float(min_confidence)
+        frequent_itemsets = pd.DataFrame()
+        rules = pd.DataFrame()
+        total_mining_time = 0.0
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            attempt_info = {"attempt": attempt, "support": current_support, "confidence": current_confidence}
+            start_time = time.time()
+
             try:
-                # Use the full frequent_itemsets DataFrame for rule generation (not filtered)
-                rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=min_confidence)
-                print(f"Generated {len(rules)} association rules")
+                if algorithm == 'apriori':
+                    frequent_itemsets = apriori(df_encoded, min_support=current_support, use_colnames=True)
+                elif algorithm == 'eclat' and eclat is not None:
+                    frequent_itemsets = eclat(df_encoded, min_support=current_support, use_colnames=True)
+                else:
+                    # default to fpgrowth when eclat not available or algorithm unspecified
+                    frequent_itemsets = fpgrowth(df_encoded, min_support=current_support, use_colnames=True)
             except Exception as e:
-                print(f"Error generating association rules: {e}")
-                # Try with support_only=True as fallback
+                attempt_info['error'] = str(e)
+                frequent_itemsets = pd.DataFrame()
+
+            mining_time = time.time() - start_time
+            total_mining_time += mining_time
+            attempt_info['mining_time'] = mining_time
+
+            # If no itemsets found, relax support and continue
+            # Diagnostics
+            print(f"Found {len(frequent_itemsets)} frequent itemsets after adaptive attempts")
+            print("Attempt summary:")
+            try:
+                # print attempts if available
+                print(attempts)
+            except Exception:
+                pass
+
+            # Generate association rules (ensure itemsets of length >= 2 exist)
+            frequent_itemsets_filtered = frequent_itemsets[frequent_itemsets['itemsets'].apply(lambda x: len(x) >= 2)] if not frequent_itemsets.empty else pd.DataFrame()
+            print(f"Itemsets with length >= 2: {len(frequent_itemsets_filtered) if not frequent_itemsets_filtered.empty else 0}")
+
+            if frequent_itemsets_filtered.empty:
+                print("No itemsets with length >= 2 found for rule generation")
+                rules = pd.DataFrame()  # Empty rules dataframe
+                attempts.append(attempt_info)
+                # Relax support
+                if current_support <= MIN_SUPPORT_FLOOR:
+                    break
+                current_support = max(MIN_SUPPORT_FLOOR, current_support * SUPPORT_RELAX_FACTOR)
+                continue
+
+            # Try to generate rules
+            try:
+                rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=current_confidence)
+            except Exception as e:
+                # fallback: try support_only variant
                 try:
-                    rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=min_confidence, support_only=True)
-                    print(f"Generated {len(rules)} association rules with support_only=True")
+                    rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=current_confidence, support_only=True)
                 except Exception as e2:
-                    print(f"Failed with support_only=True too: {e2}")
-                    rules = pd.DataFrame()  # Empty rules dataframe        # Convert itemsets to JSON-serializable format
+                    rules = pd.DataFrame()
+                    attempt_info['rule_error'] = str(e2)
+
+            attempt_info['itemsets_found'] = len(frequent_itemsets)
+            attempt_info['rules_found'] = len(rules)
+            attempts.append(attempt_info)
+            # update progress roughly based on attempt
+            try:
+                processing_state["progress"] = min(90, 50 + int((attempt / MAX_ATTEMPTS) * 40))
+            except Exception:
+                processing_state["progress"] = 75
+
+            # If rules found, stop; otherwise relax confidence then support
+            if not rules.empty:
+                break
+
+            # Relax confidence first, then support
+            if current_confidence > MIN_CONFIDENCE_FLOOR:
+                current_confidence = max(MIN_CONFIDENCE_FLOOR, current_confidence - CONFIDENCE_RELAX_STEP)
+            else:
+                if current_support <= MIN_SUPPORT_FLOOR:
+                    break
+                current_support = max(MIN_SUPPORT_FLOOR, current_support * SUPPORT_RELAX_FACTOR)
+
+        # Record total mining time
+        mining_time = total_mining_time
         itemsets_json = []
         for _, itemset in frequent_itemsets.iterrows():
             itemsets_json.append({
@@ -419,6 +572,11 @@ def mine_patterns():
             "quality_metrics": quality_metrics,
             "timestamp": datetime.now().isoformat()
         }
+
+        # Mark processing finished
+        processing_state["is_processing"] = False
+        processing_state["current_step"] = "complete"
+        processing_state["progress"] = 100
 
         return jsonify({
             "message": "Pattern mining completed successfully",
@@ -668,15 +826,48 @@ def generate_dataset():
 
         print(f"Generating dataset: {number_of_transactions} transactions, {number_of_items} items, {distribution_type} distribution")
 
+        # Optional minimum items per transaction (ensure each transaction has at least this many items)
+        min_items_per_transaction = int(data.get('min_items_per_transaction', 1)) if data.get('min_items_per_transaction') is not None else 1
+
+        # Validate min_items_per_transaction
+        if min_items_per_transaction < 1 or min_items_per_transaction > number_of_items:
+            return jsonify({"error": f"min_items_per_transaction must be between 1 and {number_of_items}"}), 400
+
         # Generate synthetic dataset
         start_time = time.time()
         transactions = generate_synthetic_transactions(
             number_of_transactions,
             number_of_items,
             avg_items_per_transaction,
-            distribution_type
+            distribution_type,
+            min_items_per_transaction=min_items_per_transaction
         )
         generation_time = time.time() - start_time
+
+        # Optionally embed guaranteed frequent patterns so association rules exist
+        # Parameters (optional): guarantee_patterns (int), guarantee_support (float 0-1), pattern_size (int)
+        guarantee_patterns = int(data.get('guarantee_patterns', 0)) if data.get('guarantee_patterns') is not None else 0
+        guarantee_support = float(data.get('guarantee_support', 0.0)) if data.get('guarantee_support') is not None else 0.0
+        pattern_size = int(data.get('pattern_size', 2)) if data.get('pattern_size') is not None else 2
+
+        if guarantee_patterns > 0 and guarantee_support > 0:
+            print(f"Embedding {guarantee_patterns} guaranteed patterns of size {pattern_size} with support {guarantee_support}")
+            # Build item pool names
+            items = [f"Item_{i+1}" for i in range(number_of_items)]
+            n_tx = len(transactions)
+            for p in range(guarantee_patterns):
+                # choose a distinct pattern (avoid duplicates)
+                pattern = random.sample(items, k=min(pattern_size, len(items)))
+                # choose target transactions to inject the pattern
+                k = max(1, int(math.ceil(guarantee_support * n_tx))) if guarantee_support > 0 else 0
+                target_idxs = random.sample(range(n_tx), k=min(k, n_tx))
+                for idx in target_idxs:
+                    # ensure all pattern items are present in the transaction
+                    tx = transactions[idx]
+                    for it in pattern:
+                        if it not in tx:
+                            tx.append(it)
+                    transactions[idx] = tx
 
         print(f"Generated {len(transactions)} transactions in {generation_time:.2f} seconds")
 
@@ -699,14 +890,20 @@ def generate_dataset():
                     if i < len(items):
                         row[f'item_{i+1}'] = items[i]
                     else:
-                        row[f'item_{i+1}'] = None
+                        # Use empty string for missing items to avoid type issues when creating DataFrame
+                        row[f'item_{i+1}'] = ''
                 rows.append(row)
             df = pd.DataFrame(columns=columns, data=rows)
 
         # Generate file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"synthetic_dataset_{timestamp}.{output_format}"
-        filepath = f"/tmp/{filename}"
+        # Use system temp dir but fall back to a project-local tmp folder if needed
+        temp_dir = tempfile.gettempdir()
+        if not os.path.isdir(temp_dir) or not os.access(temp_dir, os.W_OK):
+            temp_dir = os.path.join(os.getcwd(), 'tmp')
+            os.makedirs(temp_dir, exist_ok=True)
+        filepath = os.path.join(temp_dir, filename)
 
         # Export based on format
         if output_format == 'csv':
@@ -773,7 +970,11 @@ def generate_dataset():
 def download_dataset(filename):
     """Download generated dataset file"""
     try:
-        filepath = f"/tmp/{filename}"
+        temp_dir = tempfile.gettempdir()
+        if not os.path.isdir(temp_dir) or not os.access(temp_dir, os.W_OK):
+            temp_dir = os.path.join(os.getcwd(), 'tmp')
+            os.makedirs(temp_dir, exist_ok=True)
+        filepath = os.path.join(temp_dir, filename)
 
         if not os.path.exists(filepath):
             return jsonify({"error": "File not found"}), 404
@@ -798,7 +999,7 @@ def download_dataset(filename):
     except Exception as e:
         return jsonify({"error": f"Failed to download file: {str(e)}"}), 500
 
-def generate_synthetic_transactions(n_transactions, n_items, avg_items_per_transaction, distribution_type):
+def generate_synthetic_transactions(n_transactions, n_items, avg_items_per_transaction, distribution_type, min_items_per_transaction=1):
     """Generate synthetic transaction data using different distributions"""
 
     # Create item pool (Item_1, Item_2, ..., Item_n)
@@ -811,7 +1012,7 @@ def generate_synthetic_transactions(n_transactions, n_items, avg_items_per_trans
         for _ in range(n_transactions):
             # Use Poisson distribution for transaction size around average
             transaction_size = np.random.poisson(avg_items_per_transaction)
-            transaction_size = max(1, min(transaction_size, n_items))  # Ensure valid size
+            transaction_size = max(min_items_per_transaction, min(transaction_size, n_items))  # Ensure valid size
 
             # Randomly sample items
             selected_items = np.random.choice(items, size=transaction_size, replace=False)
@@ -826,7 +1027,7 @@ def generate_synthetic_transactions(n_transactions, n_items, avg_items_per_trans
 
         for _ in range(n_transactions):
             transaction_size = np.random.poisson(avg_items_per_transaction)
-            transaction_size = max(1, min(transaction_size, n_items))
+            transaction_size = max(min_items_per_transaction, min(transaction_size, n_items))
 
             # Sample items based on popularity weights
             selected_items = np.random.choice(items, size=transaction_size, replace=False, p=popularity_weights)
@@ -839,7 +1040,7 @@ def generate_synthetic_transactions(n_transactions, n_items, avg_items_per_trans
 
         for _ in range(n_transactions):
             transaction_size = np.random.poisson(avg_items_per_transaction)
-            transaction_size = max(1, min(transaction_size, n_items))
+            transaction_size = max(min_items_per_transaction, min(transaction_size, n_items))
 
             selected_items = np.random.choice(items, size=transaction_size, replace=False, p=popularity_weights)
             transactions.append(list(selected_items))
@@ -854,7 +1055,7 @@ def generate_synthetic_transactions(n_transactions, n_items, avg_items_per_trans
 
         for _ in range(n_transactions):
             transaction_size = np.random.poisson(avg_items_per_transaction)
-            transaction_size = max(1, min(transaction_size, n_items))
+            transaction_size = max(min_items_per_transaction, min(transaction_size, n_items))
 
             selected_items = np.random.choice(items, size=transaction_size, replace=False, p=popularity_weights)
             transactions.append(list(selected_items))

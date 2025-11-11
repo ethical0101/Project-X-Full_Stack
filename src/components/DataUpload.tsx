@@ -8,13 +8,14 @@ import { useError, handleApiError } from '@/contexts/ErrorContext';
 interface DataUploadProps {
   onDataProcessed: (data: any) => void;
   onProcessingStart?: () => void;
+  onProcessingComplete?: () => void;
 }
 
-export default function DataUpload({ onDataProcessed, onProcessingStart }: DataUploadProps) {
+export default function DataUpload({ onDataProcessed, onProcessingStart, onProcessingComplete }: DataUploadProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [minSupport, setMinSupport] = useState(0.05);
-  const [minConfidence, setMinConfidence] = useState(0.3);
+  const [minSupport, setMinSupport] = useState(0.01);
+  const [minConfidence, setMinConfidence] = useState(0.2);
   const [algorithm, setAlgorithm] = useState<'apriori' | 'fpgrowth' | 'eclat'>('apriori');
   const { handleError, handleSuccess, handleInfo } = useError();
 
@@ -107,17 +108,56 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
 
       const uploadResult = await uploadResponse.json();
 
+      const uploadStats = uploadResult.stats || uploadResult.statistics || {};
+      const totalTransactions = uploadStats.total_transactions
+        ?? uploadStats.totalTransactions
+        ?? uploadStats.transaction_count
+        ?? uploadStats.total
+        ?? 0;
+      let uniqueItems = uploadStats.unique_items
+        ?? uploadStats.uniqueItems
+        ?? uploadStats.unique
+        ?? uploadStats.columns
+        ?? 0;
+
+      // Dynamically relax parameters for sparse, large datasets
+      let supportToUse = minSupport;
+      let confidenceToUse = minConfidence;
+      let algorithmToUse: 'apriori' | 'fpgrowth' | 'eclat' = algorithm;
+
+      if (totalTransactions && totalTransactions > 0) {
+        const heuristicSupport = Math.max(0.01, Math.min(0.1, (30 / totalTransactions)));
+        if (heuristicSupport < supportToUse) {
+          const roundedSupport = parseFloat(heuristicSupport.toFixed(3));
+          supportToUse = roundedSupport;
+          setMinSupport(roundedSupport);
+          handleInfo(`Auto-adjusted minimum support to ${(roundedSupport * 100).toFixed(2)}% for better pattern discovery.`);
+        }
+      }
+
+      if (confidenceToUse > 0.2 && supportToUse <= 0.01) {
+        confidenceToUse = 0.15;
+        setMinConfidence(0.15);
+        handleInfo('Auto-adjusted minimum confidence to 15% to surface more rules.');
+      }
+
+      if (totalTransactions > 20000 && algorithm === 'apriori') {
+        algorithmToUse = 'fpgrowth';
+        setAlgorithm('fpgrowth');
+        handleInfo('Switched to FP-Growth for improved performance on large datasets.');
+      }
+
       // Step 2: Mine patterns with specified parameters
-      handleInfo(`Mining patterns using ${algorithm} algorithm...`);
+      handleInfo(`Mining patterns using ${algorithmToUse} algorithm...`);
       const miningResponse = await fetch(`${API_BASE_URL}/mine`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          min_support: minSupport,
-          min_confidence: minConfidence,
-          algorithm: algorithm
+          min_support: supportToUse,
+          min_confidence: confidenceToUse,
+          algorithm: algorithmToUse
         }),
       });
 
@@ -127,33 +167,140 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
 
       const miningResult = await miningResponse.json();
 
-      // Combine upload and mining results
+      // Step 3: Fetch analytics (if supported) to enrich the dataset
+      let analyticsResult: any = null;
+      try {
+        const analyticsResponse = await fetch(`${API_BASE_URL}/analytics`);
+        if (analyticsResponse.ok) {
+          analyticsResult = await analyticsResponse.json();
+        }
+      } catch (analyticsError) {
+        console.warn('Analytics endpoint not available:', analyticsError);
+      }
+
+      const frequentItemsets = miningResult.frequent_itemsets || miningResult.itemsets || [];
+      const associationRules = miningResult.association_rules || miningResult.rules || [];
+
+      if (!uniqueItems && Array.isArray(analyticsResult?.analytics?.top_items)) {
+        uniqueItems = analyticsResult.analytics.top_items.length;
+      }
+      const avgItems = uploadStats.avg_items_per_transaction
+        ?? uploadStats.average_items_per_transaction
+        ?? uploadStats.avg_items
+        ?? uploadStats.avgItems
+        ?? 0;
+
+      const itemFrequenciesFromUpload = uploadResult.item_frequencies || uploadResult.itemFrequencies;
+      let itemFrequencies = Array.isArray(itemFrequenciesFromUpload) ? itemFrequenciesFromUpload : [];
+
+      if (!itemFrequencies.length && analyticsResult?.item_frequencies) {
+        itemFrequencies = analyticsResult.item_frequencies;
+      }
+
+      if (!itemFrequencies.length && Array.isArray(analyticsResult?.analytics?.top_items)) {
+        const topItems = analyticsResult.analytics.top_items;
+        itemFrequencies = topItems.map((item: any) => ({
+          item: item.item || item.name,
+          frequency: item.frequency || item.count || 0,
+          support: totalTransactions ? (item.frequency || item.count || 0) / totalTransactions : 0
+        }));
+      }
+
+      const calculateAverage = (values: number[]) => values.length ? values.reduce((acc, val) => acc + val, 0) / values.length : null;
+
+      const confidences = associationRules.map((rule: any) => rule.confidence || 0);
+      const lifts = associationRules.map((rule: any) => rule.lift || 0);
+      const coverages = associationRules.map((rule: any) => rule.support || 0);
+
+      const avgConfidence = calculateAverage(confidences);
+      const avgLift = calculateAverage(lifts);
+      const avgSupport = calculateAverage(coverages);
+      const ruleDiversity = associationRules.length
+        ? new Set(associationRules.map((rule: any) => Array.isArray(rule.antecedents)
+            ? rule.antecedents.join('||')
+            : String(rule.antecedents || '')
+        )).size / associationRules.length
+        : null;
+      const ruleCoverage = totalTransactions
+        ? (associationRules.length / totalTransactions) * 100
+        : null;
+
+      const performanceComparison = analyticsResult?.analytics?.performance_comparison;
+      const aprioriTime = miningResult.performance?.apriori_time
+        ?? performanceComparison?.apriori?.execution_time
+        ?? performanceComparison?.Apriori?.execution_time
+        ?? null;
+      const fpgrowthTime = miningResult.performance?.fpgrowth_time
+        ?? performanceComparison?.fpgrowth?.execution_time
+        ?? performanceComparison?.FPGrowth?.execution_time
+        ?? null;
+      const miningTime = miningResult.performance?.mining_time
+        ?? miningResult.performance?.execution_time
+        ?? aprioriTime
+        ?? null;
+      const speedup = miningResult.performance?.speedup
+        ?? (aprioriTime && fpgrowthTime ? (aprioriTime / fpgrowthTime) : null);
+
+      const qualityMetrics = {
+        ...(miningResult.quality_metrics || {}),
+        ...(analyticsResult?.quality_metrics || {}),
+        avg_confidence: avgConfidence ?? miningResult.quality_metrics?.avg_confidence,
+        avg_lift: avgLift ?? miningResult.quality_metrics?.avg_lift,
+        avg_support: avgSupport ?? miningResult.quality_metrics?.avg_support,
+        rule_diversity: ruleDiversity ?? miningResult.quality_metrics?.rule_diversity,
+        rule_coverage: ruleCoverage ?? miningResult.quality_metrics?.rule_coverage
+      };
+
+      const performance = {
+        ...(miningResult.performance || {}),
+        algorithm: algorithmToUse,
+        min_support: supportToUse,
+        min_confidence: confidenceToUse,
+        apriori_time: aprioriTime,
+        fpgrowth_time: fpgrowthTime,
+        mining_time: miningTime,
+        speedup: speedup
+      };
+
       const combinedResult = {
         ...uploadResult,
         ...miningResult,
-        summary: {
-          transaction_count: uploadResult.stats?.total_transactions || 0,
-          unique_items: uploadResult.stats?.unique_items || 0,
-          avg_items: uploadResult.stats?.avg_items_per_transaction || 0,
+        analytics: analyticsResult || null,
+        stats: {
+          ...uploadStats,
+          total_transactions: totalTransactions,
+          unique_items: uniqueItems,
+          avg_items_per_transaction: avgItems,
+          avg_items: avgItems
         },
-        frequent_itemsets: miningResult.frequent_itemsets || [],
-        association_rules: miningResult.association_rules || [], // Backend returns association_rules
-        rules: miningResult.association_rules || [], // Keep both for compatibility
-        performance: miningResult.performance || {},
-        quality_metrics: miningResult.quality_metrics || {}
+        summary: {
+          transaction_count: totalTransactions,
+          unique_items: uniqueItems,
+          avg_items: avgItems
+        },
+        frequent_itemsets: frequentItemsets,
+        itemsets: frequentItemsets,
+        association_rules: associationRules,
+        rules: associationRules,
+        item_frequencies: itemFrequencies,
+        performance,
+        metrics: qualityMetrics,
+        quality_metrics: qualityMetrics
       };
 
       console.log('Mining result:', miningResult);
+      console.log('Analytics result:', analyticsResult);
       console.log('Combined result:', combinedResult);
-      console.log('Association rules count:', combinedResult.association_rules?.length);
 
       onDataProcessed(combinedResult);
       handleSuccess(`Successfully processed ${combinedResult.summary?.transaction_count || 0} transactions and found ${combinedResult.association_rules?.length || 0} association rules!`);
     } catch (error) {
-      handleError(error, 'Data Processing');
-      console.error('Error:', error);
+  const normalizedError = error instanceof Error ? error : new Error(String(error));
+  handleError(normalizedError, 'Data Processing');
+  console.error('Error:', normalizedError);
     } finally {
       setIsProcessing(false);
+      onProcessingComplete?.();
     }
   };
 
@@ -233,14 +380,15 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
           <h3 className="font-medium text-blue-800 mb-4">Mining Parameters</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="minSupport" className="block text-sm font-medium text-gray-700 mb-1">
                 Min Support ({(minSupport * 100).toFixed(1)}%)
               </label>
               <input
+                id="minSupport"
                 type="range"
-                min="0.01"
+                min="0.001"
                 max="0.5"
-                step="0.01"
+                step="0.001"
                 value={minSupport}
                 onChange={(e) => setMinSupport(parseFloat(e.target.value))}
                 className="w-full"
@@ -248,10 +396,11 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
               <div className="text-xs text-gray-500 mt-1">Lower = more patterns</div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="minConfidence" className="block text-sm font-medium text-gray-700 mb-1">
                 Min Confidence ({(minConfidence * 100).toFixed(1)}%)
               </label>
               <input
+                id="minConfidence"
                 type="range"
                 min="0.1"
                 max="1.0"
@@ -263,10 +412,11 @@ export default function DataUpload({ onDataProcessed, onProcessingStart }: DataU
               <div className="text-xs text-gray-500 mt-1">Higher = stronger rules</div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="miningAlgorithm" className="block text-sm font-medium text-gray-700 mb-1">
                 Algorithm
               </label>
               <select
+                id="miningAlgorithm"
                 value={algorithm}
                 onChange={(e) => setAlgorithm(e.target.value as 'apriori' | 'fpgrowth' | 'eclat')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"

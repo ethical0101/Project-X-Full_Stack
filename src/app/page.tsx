@@ -23,6 +23,10 @@ export default function Home() {
     setIsProcessing(true);
   };
 
+  const handleProcessingComplete = () => {
+    setIsProcessing(false);
+  };
+
   const tabs = [
     { id: 'upload', name: 'Data Upload', icon: '📁' },
     { id: 'generator', name: 'Dataset Generator', icon: '🎲' },
@@ -53,7 +57,9 @@ export default function Home() {
       </div>
 
       {/* Progress Indicator */}
-      <ProgressIndicator data={data} isProcessing={isProcessing} />
+      {(activeTab === 'upload' || activeTab === 'dashboard') && (
+        <ProgressIndicator data={data} isProcessing={isProcessing} />
+      )}
 
       {/* Tab Content */}
       <div className="bg-white rounded-lg shadow-sm border">
@@ -61,6 +67,7 @@ export default function Home() {
           <DataUpload
             onDataProcessed={handleDataProcessed}
             onProcessingStart={handleProcessingStart}
+            onProcessingComplete={handleProcessingComplete}
           />
         )}
         {activeTab === 'generator' && (
